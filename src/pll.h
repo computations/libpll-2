@@ -126,6 +126,10 @@
 #define PLL_ATTRIB_SITE_REPEATS    (1 << 10)
 #define PLL_REPEATS_LOOKUP_SIZE  2000000 
 
+/* nonreversable model */
+
+#define PLL_ATTRIB_NONREV          (1 << 11)
+
 /* topological rearrangements */
 
 #define PLL_UTREE_MOVE_SPR                  1
@@ -255,6 +259,10 @@ typedef struct pll_partition
   double ** eigenvecs;
   double ** inv_eigenvecs;
   double ** eigenvals;
+
+  double ** eigenvecs_imag;
+  double ** inv_eigenvecs_imag;
+  double ** eigenvals_imag;
 
   /* tip-tip precomputation data */
   unsigned int maxstates;
@@ -543,6 +551,7 @@ PLL_EXPORT extern const pll_state_t pll_map_nt[256];
 PLL_EXPORT extern const pll_state_t pll_map_aa[256];
 PLL_EXPORT extern const unsigned int pll_map_fasta[256];
 PLL_EXPORT extern const unsigned int pll_map_phylip[256];
+PLL_EXPORT extern const unsigned int pll_map_generic[256];
 
 PLL_EXPORT extern const double pll_aa_rates_dayhoff[190];
 PLL_EXPORT extern const double pll_aa_rates_lg[190];
@@ -2336,6 +2345,23 @@ PLL_EXPORT int pll_core_update_pmatrix(double ** pmatrix,
                                        double * const * inv_eigenvecs,
                                        unsigned int count,
                                        unsigned int attrib);
+PLL_EXPORT int pll_core_update_pmatrix_nonrev(double ** pmatrix,
+                                              unsigned int states,
+                                              unsigned int states_padded,
+                                              unsigned int rate_cats,
+                                              const double * rates,
+                                              const double * branch_lengths,
+                                              const unsigned int * matrix_indices,
+                                              const unsigned int * params_indices,
+                                              const double * prop_invar,
+                                              double * const * eigenvals,
+                                              double * const * eigenvals_imag,
+                                              double * const * eigenvecs,
+                                              double * const * eigenvecs_imag,
+                                              double * const * inv_eigenvecs,
+                                              double * const * inv_eigenvecs_imag,
+                                              unsigned int count,
+                                              unsigned int attributes);
 
 /* functions in core_pmatrix_avx2.c */
 

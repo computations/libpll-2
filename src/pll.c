@@ -99,6 +99,21 @@ static void dealloc_partition_data(pll_partition_t * partition)
       pll_aligned_free(partition->eigenvals[i]);
   free(partition->eigenvals);
 
+  if (partition->eigenvecs_imag)
+    for (i = 0; i < partition->rate_matrices; ++i)
+      pll_aligned_free(partition->eigenvecs_imag[i]);
+  free(partition->eigenvecs_imag);
+
+  if (partition->inv_eigenvecs_imag)
+    for (i = 0; i < partition->rate_matrices; ++i)
+      pll_aligned_free(partition->inv_eigenvecs_imag[i]);
+  free(partition->inv_eigenvecs_imag);
+
+  if (partition->eigenvals_imag)
+    for (i = 0; i < partition->rate_matrices; ++i)
+      pll_aligned_free(partition->eigenvals_imag[i]);
+  free(partition->eigenvals_imag);
+
   if (partition->frequencies)
     for (i = 0; i < partition->rate_matrices; ++i)
       pll_aligned_free(partition->frequencies[i]);
@@ -505,6 +520,10 @@ PLL_EXPORT pll_partition_t * pll_partition_create(unsigned int tips,
   partition->inv_eigenvecs = NULL;
   partition->eigenvals = NULL;
 
+  partition->eigenvecs_imag = NULL;
+  partition->inv_eigenvecs_imag = NULL;
+  partition->eigenvals_imag = NULL;
+
   partition->rates = NULL;
   partition->rate_weights = NULL;
   partition->subst_params = NULL;
@@ -701,6 +720,96 @@ PLL_EXPORT pll_partition_t * pll_partition_create(unsigned int tips,
     /* TODO: don't forget to add code for SSE/AVX */
   }
 
+  /* imaginary portion of the eigen{vals,vecs} */
+  if (partition->attributes & PLL_ATTRIB_NONREV) {
+    /* eigenvecs_imag */
+    partition->eigenvecs_imag = (double **)calloc(partition->rate_matrices,
+                                                 sizeof(double *));
+    if (!partition->eigenvecs_imag)
+    {
+      dealloc_partition_data(partition);
+      pll_errno = PLL_ERROR_MEM_ALLOC;
+      snprintf(pll_errmsg,
+               200,
+               "Unable to allocate enough memory for imaginary eigenvectors.");
+      return PLL_FAILURE;
+    }
+    for (i = 0; i < partition->rate_matrices; ++i){
+      partition->eigenvecs_imag[i] = pll_aligned_alloc(states*states_padded*
+                                                    sizeof(double),
+                                                    partition->alignment);
+      if (!partition->eigenvecs_imag[i])
+      {
+        dealloc_partition_data(partition);
+        pll_errno = PLL_ERROR_MEM_ALLOC;
+        snprintf(pll_errmsg,
+                 200,
+                 "Unable to allocate enough memory for imaginary eigenvectors.");
+        return PLL_FAILURE;
+      }
+      memset(partition->eigenvecs_imag[i], 0, states
+                                              *states_padded
+                                              *sizeof(double));
+    }
+    /* inv_eigenvecs_imag */
+    partition->inv_eigenvecs_imag = (double **)calloc(partition->rate_matrices,
+                                                 sizeof(double *));
+    if (!partition->inv_eigenvecs_imag)
+    {
+      dealloc_partition_data(partition);
+      pll_errno = PLL_ERROR_MEM_ALLOC;
+      snprintf(pll_errmsg,
+               200,
+               "Unable to allocate enough memory for inverse imaginary eigenvectors.");
+      return PLL_FAILURE;
+    }
+    for (i = 0; i < partition->rate_matrices; ++i){
+      partition->inv_eigenvecs_imag[i] = pll_aligned_alloc(states*states_padded*
+                                                    sizeof(double),
+                                                    partition->alignment);
+      if (!partition->inv_eigenvecs_imag[i])
+      {
+        dealloc_partition_data(partition);
+        pll_errno = PLL_ERROR_MEM_ALLOC;
+        snprintf(pll_errmsg,
+                 200,
+                 "Unable to allocate enough memory for inverse imaginary eigenvectors.");
+        return PLL_FAILURE;
+      }
+      memset(partition->inv_eigenvecs_imag[i], 0, states
+                                              *states_padded
+                                              *sizeof(double));
+    }
+    /* eigenvals_imag */
+    partition->eigenvals_imag = (double **)calloc(partition->rate_matrices,
+                                                 sizeof(double *));
+    if (!partition->eigenvals_imag)
+    {
+      dealloc_partition_data(partition);
+      pll_errno = PLL_ERROR_MEM_ALLOC;
+      snprintf(pll_errmsg,
+               200,
+               "Unable to allocate enough memory for imaginary eigenvalues.");
+      return PLL_FAILURE;
+    }
+    for (i = 0; i < partition->rate_matrices; ++i)
+    {
+      partition->eigenvals_imag[i] = pll_aligned_alloc(
+                                                  states_padded*sizeof(double),
+                                                  partition->alignment);
+      if (!partition->eigenvals_imag[i])
+      {
+        dealloc_partition_data(partition);
+        pll_errno = PLL_ERROR_MEM_ALLOC;
+        snprintf(pll_errmsg,
+                 200,
+                 "Unable to allocate enough memory for imaginary eigenvalues.");
+        return PLL_FAILURE;
+      }
+      memset(partition->eigenvals_imag[i], 0, states_padded * sizeof(double));
+    }
+  }
+
   /* subst_params */
   partition->subst_params = (double **)calloc(partition->rate_matrices,
                                               sizeof(double *));
@@ -715,9 +824,18 @@ PLL_EXPORT pll_partition_t * pll_partition_create(unsigned int tips,
   }
   for (i = 0; i < partition->rate_matrices; ++i)
   {
-    partition->subst_params[i] = pll_aligned_alloc(((states*states-states)/2) *
-                                                    sizeof(double),
-                                                   partition->alignment);
+    if (attributes & PLL_ATTRIB_NONREV)
+    {
+      partition->subst_params[i] = pll_aligned_alloc(((states*states-states)) *
+                                                      sizeof(double),
+                                                     partition->alignment);
+    }
+    else
+    {
+      partition->subst_params[i] = pll_aligned_alloc(((states*states-states)/2) *
+                                                      sizeof(double),
+                                                     partition->alignment);
+    }
     if (!partition->subst_params[i])
     {
       dealloc_partition_data(partition);

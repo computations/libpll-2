@@ -20,6 +20,24 @@
 */
 
 #include "pll.h"
+#include <gsl/gsl_eigen.h>
+#include <gsl/gsl_linalg.h>
+
+#define PLL_MEMORY_ALLOC_CHECK(ptr) {\
+  if(ptr==NULL){\
+    pll_errno = PLL_ERROR_MEM_ALLOC;\
+    snprintf(pll_errmsg, 200, "Could not allocate memory for %s", #ptr ); \
+    return PLL_FAILURE;\
+  } \
+}
+
+#define PLL_MEMORY_ALLOC_CHECK_MSG(ptr, msg...) {\
+  if(ptr==NULL){\
+    pll_errno = PLL_ERROR_MEM_ALLOC;\
+    snprintf(pll_errmsg, 200, msg); \
+    return PLL_FAILURE;\
+  } \
+}
 
 static int mytqli(double *d, double *e, const unsigned int n, double **z)
 {
@@ -177,18 +195,111 @@ static void mytred2(double **a, const unsigned int n, double *d, double *e)
     }
 }
 
+int pll_nonsym_eigen(double** A,
+        size_t n,
+        size_t n_padded,
+        double* eigenvalues_real,
+        double* eigenvalues_imag,
+        double* eigenvectors_real,
+        double* eigenvectors_imag,
+        double* inv_eigenvectors_real,
+        double* inv_eigenvectors_imag)
+{
+    int signum;
+    size_t i, j;
+    gsl_eigen_nonsymmv_workspace *ws;
+    gsl_vector_complex *eigenvalues;
+    gsl_matrix *M;
+    gsl_matrix_complex *eigenvectors, *inv_eigenvectors, *tmp_eigenvectors;
+    gsl_permutation *lu_perm;
+
+
+    ws = gsl_eigen_nonsymmv_alloc(n);
+    PLL_MEMORY_ALLOC_CHECK_MSG(ws, "Could not allocate memory for the GSL workspace");
+    M = gsl_matrix_alloc(n,n);
+    PLL_MEMORY_ALLOC_CHECK_MSG(M, "Could not allocate memory for a matrix");
+
+    for (i = 0; i < n; ++i) {
+        for (j = 0; j < n; ++j) {
+            gsl_matrix_set(M, i, j, A[i][j]);
+        }
+    }
+
+    eigenvectors = gsl_matrix_complex_alloc(n,n);
+    PLL_MEMORY_ALLOC_CHECK(eigenvectors);
+    eigenvalues = gsl_vector_complex_alloc(n);
+    PLL_MEMORY_ALLOC_CHECK(eigenvalues);
+
+    gsl_eigen_nonsymmv(M, eigenvalues, eigenvectors, ws);
+
+    signum = 1;
+    inv_eigenvectors = gsl_matrix_complex_alloc(n,n);
+    PLL_MEMORY_ALLOC_CHECK(inv_eigenvectors);
+    tmp_eigenvectors = gsl_matrix_complex_alloc(n,n);
+    gsl_matrix_complex_memcpy(tmp_eigenvectors, eigenvectors);
+    PLL_MEMORY_ALLOC_CHECK(tmp_eigenvectors);
+    lu_perm = gsl_permutation_alloc(n);
+    PLL_MEMORY_ALLOC_CHECK(lu_perm);
+
+    gsl_linalg_complex_LU_decomp(tmp_eigenvectors, lu_perm, &signum);
+    gsl_linalg_complex_LU_invert(tmp_eigenvectors, lu_perm, inv_eigenvectors);
+
+    /*
+     * TODO: Currently, to access elements I use the range checked matrix_get
+     * functions. We can speed these up by defining GSL_RANGE_CHECK_OFF and
+     * recompiling. It might be easier to read memory directly from the struct
+     * instead. The only problem is that the way that complex numbers are
+     * stored is not well documented.
+     */
+    for (i = 0; i < n; ++i) {
+        eigenvalues_real[i] = GSL_REAL(gsl_vector_complex_get(eigenvalues, i));
+        eigenvalues_imag[i] = GSL_IMAG(gsl_vector_complex_get(eigenvalues, i));
+    }
+
+    for (i = 0; i < n; ++i) {
+        for (j = 0; j < n; ++j) {
+            eigenvectors_real[j*n_padded + i] =
+                GSL_REAL(gsl_matrix_complex_get(eigenvectors, j, i));
+            eigenvectors_imag[j*n_padded + i] =
+                GSL_IMAG(gsl_matrix_complex_get(eigenvectors, j, i));
+            inv_eigenvectors_real[j*n_padded + i] =
+                GSL_REAL(gsl_matrix_complex_get(inv_eigenvectors,j,i));
+            inv_eigenvectors_imag[j*n_padded + i] =
+                GSL_IMAG(gsl_matrix_complex_get(inv_eigenvectors,j,i));
+        }
+    }
+
+    gsl_eigen_nonsymmv_free(ws);
+    gsl_matrix_free(M);
+    gsl_matrix_complex_free(eigenvectors);
+    gsl_matrix_complex_free(inv_eigenvectors);
+    gsl_matrix_complex_free(tmp_eigenvectors);
+    gsl_vector_complex_free(eigenvalues);
+    gsl_permutation_free(lu_perm);
+    return PLL_SUCCESS;
+}
+
 /* TODO: Add code for SSE/AVX. Perhaps allocate qmatrix in one chunk to avoid the
 complex checking when to dealloc */
 static double ** create_ratematrix(double * params,
                                    double * frequencies,
-                                   unsigned int states)
+                                   unsigned int states,
+                                   int unsymm)
 {
   unsigned int i,j,k,success;
 
   double ** qmatrix;
 
+  unsigned int params_count = 0;
+  if (unsymm)
+  {
+    params_count = states * states - states;
+  }
+  else
+  {
+    params_count = (states * states-states) / 2;
+  }
   /* normalize substitution parameters */
-  unsigned int params_count = (states*states - states) / 2;
   double * params_normalized = (double *)malloc(sizeof(double) * params_count);
   if (!params_normalized)
     return NULL;
@@ -219,20 +330,48 @@ static double ** create_ratematrix(double * params,
     return NULL;
   }
 
-  /* construct a matrix equal to sqrt(pi) * Q sqrt(pi)^-1 in order to ensure
-     it is symmetric */
 
-  for (i = 0; i < states; ++i) qmatrix[i][i] = 0;
-
-  k = 0;
-  for (i = 0; i < states; ++i)
+  if (unsymm)
   {
-    for (j = i+1; j < states; ++j)
+    k = 0;
+    for (i = 0; i < states; ++i)
     {
-      double factor = params_normalized[k++];
-      qmatrix[i][j] = qmatrix[j][i] = factor * sqrt(frequencies[i] * frequencies[j]);
-      qmatrix[i][i] -= factor * frequencies[j];
-      qmatrix[j][j] -= factor * frequencies[i];
+      double row_sum = 0;
+      for (j = 0; j < states; ++j)
+      {
+        if (i == j)
+        {
+          continue;
+        }
+        double factor = params_normalized[k++];
+        qmatrix[i][j] = factor * sqrt(frequencies[i] * frequencies[j]);
+        row_sum += qmatrix[i][j];
+      }
+      qmatrix[i][i] = -1 * row_sum;
+    }
+  }
+  else
+  {
+    /* construct a matrix equal to sqrt(pi) * Q sqrt(pi)^-1 in order to ensure
+       it is symmetric */
+    /*
+     * The above comment is incorrect. This computes 
+     *      Q .* sqrt(pi*pi'),
+     * I.E. the elementwise product of Q with the outer product of pi with
+     * itself. This creates a symmetric matrix, if Q was symmetric.
+     */
+    for (i = 0; i < states; ++i) qmatrix[i][i] = 0;
+
+    k = 0;
+    for (i = 0; i < states; ++i)
+    {
+      for (j = i+1; j < states; ++j)
+      {
+        double factor = params_normalized[k++];
+        qmatrix[i][j] = qmatrix[j][i] = factor * sqrt(frequencies[i] * frequencies[j]);
+        qmatrix[i][i] -= factor * frequencies[j];
+        qmatrix[j][j] -= factor * frequencies[i];
+      }
     }
   }
 
@@ -251,8 +390,9 @@ static double ** create_ratematrix(double * params,
 PLL_EXPORT int pll_update_eigen(pll_partition_t * partition,
                                 unsigned int params_index)
 {
+  int result_no;
   unsigned int i,j,k;
-  double *e, *d;
+  double *e = NULL, *d = NULL;
   double ** a;
 
   double * eigenvecs = partition->eigenvecs[params_index];
@@ -264,9 +404,15 @@ PLL_EXPORT int pll_update_eigen(pll_partition_t * partition,
   unsigned int states = partition->states;
   unsigned int states_padded = partition->states_padded;
 
+  double* eigenvecs_imag = NULL;
+  double* inv_eigenvecs_imag = NULL;
+  double* eigenvals_imag = NULL;
+
+
   a = create_ratematrix(subst_params,
                         freqs,
-                        states);
+                        states,
+                        partition->attributes & PLL_ATTRIB_NONREV);
   if (!a)
   {
     pll_errno = PLL_ERROR_MEM_ALLOC;
@@ -274,40 +420,61 @@ PLL_EXPORT int pll_update_eigen(pll_partition_t * partition,
     return PLL_FAILURE;
   }
 
-  d = (double *)malloc(states*sizeof(double));
-  e = (double *)malloc(states*sizeof(double));
-  if (!d || !e)
+  if(partition->attributes & PLL_ATTRIB_NONREV)
   {
-    if (d) free(d);
-    if (e) free(e);
-    for(i = 0; i < states; ++i) free(a[i]);
-    free(a);
-    pll_errno = PLL_ERROR_MEM_ALLOC;
-    snprintf(pll_errmsg, 200, "Unable to allocate enough memory.");
-    return PLL_FAILURE;
+    eigenvecs_imag = partition->eigenvecs_imag[params_index];
+    inv_eigenvecs_imag = partition->inv_eigenvecs_imag[params_index];
+    eigenvals_imag = partition->eigenvals_imag[params_index];
+    result_no = pll_nonsym_eigen(
+            a,
+            states,
+            states_padded,
+            eigenvals,
+            eigenvals_imag,
+            eigenvecs,
+            eigenvecs_imag,
+            inv_eigenvecs,
+            inv_eigenvecs_imag);
+    if(result_no == PLL_FAILURE){
+      return PLL_FAILURE;
+    }
   }
-
-  mytred2(a, states, d, e);
-  mytqli(d, e, states, a);
-
-  /* store eigen vectors */
-  for (i = 0; i < states; ++i)
-    memcpy(eigenvecs + i*states_padded, a[i], states*sizeof(double));
-
-  /* store eigen values */
-  memcpy(eigenvals, d, states*sizeof(double));
-
-  /* store inverse eigen vectors */
-  for (k = 0, i = 0; i < states; ++i)
+  else
   {
-    for (j = i; j < states_padded*states; j += states_padded)
-      inv_eigenvecs[k++] = eigenvecs[j];
+    d = (double *)malloc(states*sizeof(double));
+    e = (double *)malloc(states*sizeof(double));
+    if (!d || !e)
+    {
+      if (d) free(d);
+      if (e) free(e);
+      for(i = 0; i < states; ++i) free(a[i]);
+      free(a);
+      pll_errno = PLL_ERROR_MEM_ALLOC;
+      snprintf(pll_errmsg, 200, "Unable to allocate enough memory.");
+      return PLL_FAILURE;
+    }
+    mytred2(a, states, d, e);
+    mytqli(d, e, states, a);
 
-    /* account for padding */
-    k += states_padded - states;
+    /* store eigen vectors */
+    for (i = 0; i < states; ++i)
+      memcpy(eigenvecs + i*states_padded, a[i], states*sizeof(double));
+
+    /* store eigen values */
+    memcpy(eigenvals, d, states*sizeof(double));
+
+    /* store inverse eigen vectors */
+    for (k = 0, i = 0; i < states; ++i)
+    {
+      for (j = i; j < states_padded*states; j += states_padded)
+        inv_eigenvecs[k++] = eigenvecs[j];
+
+      /* account for padding */
+      k += states_padded - states;
+    }
+
+    assert(k == states_padded*states);
   }
-
-  assert(k == states_padded*states);
 
   /* multiply the inverse eigen vectors from the left with sqrt(pi)^-1 */
   for (i = 0; i < states; ++i)
@@ -321,8 +488,14 @@ PLL_EXPORT int pll_update_eigen(pll_partition_t * partition,
 
   partition->eigen_decomp_valid[params_index] = 1;
 
-  free(d);
-  free(e);
+  if(d)
+  {
+    free(d);
+  }
+  if(e)
+  {
+    free(e);
+  }
   for (i = 0; i < states; ++i)
     free(a[i]);
   free(a);
@@ -348,19 +521,40 @@ PLL_EXPORT int pll_update_prob_matrices(pll_partition_t * partition,
     }
   }
 
-  return pll_core_update_pmatrix(partition->pmatrix,
-                                 partition->states,
-                                 partition->rate_cats,
-                                 partition->rates,
-                                 branch_lengths,
-                                 matrix_indices,
-                                 params_indices,
-                                 partition->prop_invar,
-                                 partition->eigenvals,
-                                 partition->eigenvecs,
-                                 partition->inv_eigenvecs,
-                                 count,
-                                 partition->attributes);
+  if (partition->attributes & PLL_ATTRIB_NONREV){
+    return pll_core_update_pmatrix_nonrev(partition->pmatrix,
+                                   partition->states,
+                                   partition->states_padded,
+                                   partition->rate_cats,
+                                   partition->rates,
+                                   branch_lengths,
+                                   matrix_indices,
+                                   params_indices,
+                                   partition->prop_invar,
+                                   partition->eigenvals,
+                                   partition->eigenvals_imag,
+                                   partition->eigenvecs,
+                                   partition->eigenvecs_imag,
+                                   partition->inv_eigenvecs,
+                                   partition->inv_eigenvecs_imag,
+                                   count,
+                                   partition->attributes);
+  }
+  else{
+    return pll_core_update_pmatrix(partition->pmatrix,
+                                   partition->states,
+                                   partition->rate_cats,
+                                   partition->rates,
+                                   branch_lengths,
+                                   matrix_indices,
+                                   params_indices,
+                                   partition->prop_invar,
+                                   partition->eigenvals,
+                                   partition->eigenvecs,
+                                   partition->inv_eigenvecs,
+                                   count,
+                                   partition->attributes);
+  }
 }
 
 PLL_EXPORT void pll_set_frequencies(pll_partition_t * partition,
@@ -404,7 +598,15 @@ PLL_EXPORT void pll_set_subst_params(pll_partition_t * partition,
                                      unsigned int params_index,
                                      const double * params)
 {
-  unsigned int count = partition->states * (partition->states-1) / 2;
+  unsigned int count = 0;
+  if (partition->attributes & PLL_ATTRIB_NONREV)
+  {
+    count = partition->states * (partition->states-1);
+  }
+  else
+  {
+    count = partition->states * (partition->states-1) / 2;
+  }
 
   memcpy(partition->subst_params[params_index],
          params, count*sizeof(double));
