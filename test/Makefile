@@ -18,7 +18,7 @@
 #    Schloss-Wolfsbrunnenweg 35, D-69118 Heidelberg, Germany
 
 CC = gcc
-CFLAGS = -L../build/src/ -g -O3 -Wall -std=c99 -lgsl -lcblas
+CFLAGS = -L. -g -O3 -Wall -std=c99 -fsanitize=address -fno-omit-frame-pointer -lgsl -lcblas
 CLIBS = -lpll -lm
 
 CFILES = $(shell find src -name '*.c' ! -name 'common.c')
