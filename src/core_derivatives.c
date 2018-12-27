@@ -112,7 +112,7 @@ PLL_EXPORT int pll_core_update_sumtable_repeats(unsigned int states,
                               attrib);
   return PLL_FAILURE;
 }
-  
+
 PLL_EXPORT int pll_core_update_sumtable_ti_4x4(unsigned int sites,
                                                unsigned int rate_cats,
                                                const double * parent_clv,

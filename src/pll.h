@@ -126,6 +126,10 @@
 #define PLL_ATTRIB_SITE_REPEATS    (1 << 10)
 #define PLL_REPEATS_LOOKUP_SIZE  2000000 
 
+/* nonreversable model */
+
+#define PLL_ATTRIB_NONREV          (1 << 12)
+
 /* topological rearrangements */
 
 #define PLL_UTREE_MOVE_SPR                  1
@@ -255,6 +259,10 @@ typedef struct pll_partition
   double ** eigenvecs;
   double ** inv_eigenvecs;
   double ** eigenvals;
+
+  double ** eigenvecs_imag;
+  double ** inv_eigenvecs_imag;
+  double ** eigenvals_imag;
 
   /* tip-tip precomputation data */
   unsigned int maxstates;
