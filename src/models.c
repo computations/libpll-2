@@ -21,6 +21,7 @@
 
 #include "pll.h"
 #include <gsl/gsl_eigen.h>
+#include <gsl/gsl_linalg.h>
 
 static int mytqli(double *d, double *e, const unsigned int n, double **z)
 {
@@ -180,10 +181,13 @@ static void mytred2(double **a, const unsigned int n, double *d, double *e)
 
 void pll_nonsym_eigen(double** A,
         size_t n,
+        size_t n_padded,
         double* eigenvalues_real,
         double* eigenvalues_imag,
-        double** eigenvectors_real,
-        double** eigenvectors_imag)
+        double* eigenvectors_real,
+        double* eigenvectors_imag,
+        double* inv_eigenvectors_real,
+        double* inv_eigenvectors_imag)
 {
     gsl_eigen_nonsymmv_workspace* ws = gsl_eigen_nonsymmv_alloc(n);
     gsl_matrix* M = gsl_matrix_alloc(n,n);
@@ -198,24 +202,46 @@ void pll_nonsym_eigen(double** A,
 
     gsl_eigen_nonsymmv(M, eigenvalues, eigenvectors, ws);
 
+    int signum = 1;
+    gsl_matrix_complex* inv_eigenvectors = gsl_matrix_complex_alloc(n,n);
+    gsl_matrix_complex* tmp_eigenvectors = gsl_matrix_complex_alloc(n,n);
+    gsl_matrix_complex_memcpy(tmp_eigenvectors, eigenvectors);
+    gsl_permutation* identity = gsl_permutation_alloc(n);
 
+    gsl_linalg_complex_LU_decomp(tmp_eigenvectors, identity, &signum);
+    gsl_linalg_complex_LU_invert(tmp_eigenvectors, identity, inv_eigenvectors);
+
+    //TODO: make this not awful
     for (size_t i = 0; i < n; ++i) {
         eigenvalues_real[i] = GSL_REAL(gsl_vector_complex_get(eigenvalues, i));
         eigenvalues_imag[i] = GSL_IMAG(gsl_vector_complex_get(eigenvalues, i));
     }
 
-    //TODO: make this not awful
+    /*
+     * The eigenvalue decompostion routine for the symmetric version uses
+     * fortran order for rows and columns. GSL uses c order, so we need to
+     * transpose the GSL results to match the rest of the program.
+     */
     for (size_t i = 0; i < n; ++i) {
         for (size_t j = 0; j < n; ++j) {
-            eigenvectors_real[i][j] = GSL_REAL(gsl_matrix_complex_get(eigenvectors, i, j));
-            eigenvectors_imag[i][j] = GSL_IMAG(gsl_matrix_complex_get(eigenvectors, i, j));
+            eigenvectors_real[j*n_padded + i] =
+                GSL_REAL(gsl_matrix_complex_get(eigenvectors, i, j));
+            eigenvectors_imag[j*n_padded + i] =
+                GSL_IMAG(gsl_matrix_complex_get(eigenvectors, i, j));
+            inv_eigenvectors_real[j*n_padded + i] =
+                GSL_REAL(gsl_matrix_complex_get(inv_eigenvectors,i,j));
+            inv_eigenvectors_imag[j*n_padded + i] =
+                GSL_IMAG(gsl_matrix_complex_get(inv_eigenvectors,i,j));
         }
     }
 
     gsl_eigen_nonsymmv_free(ws);
     gsl_matrix_free(M);
     gsl_matrix_complex_free(eigenvectors);
+    gsl_matrix_complex_free(inv_eigenvectors);
+    gsl_matrix_complex_free(tmp_eigenvectors);
     gsl_vector_complex_free(eigenvalues);
+    gsl_permutation_free(identity);
 }
 
 /* TODO: Add code for SSE/AVX. Perhaps allocate qmatrix in one chunk to avoid the
@@ -333,26 +359,27 @@ PLL_EXPORT int pll_update_eigen(pll_partition_t * partition,
   mytqli(d, e, states, a);
   */
 
-  double** eigenvectors_real = (double**)malloc(states*sizeof(double*));
-  double** eigenvectors_imag = (double**)malloc(states*sizeof(double*));
-  for (size_t i = 0; i < states; ++i) {
-      eigenvectors_real[i] = (double*)malloc(states*sizeof(double));
-      eigenvectors_imag[i] = (double*)malloc(states*sizeof(double));
-  }
+  //double* eigenvectors_real = (double**)malloc(states*states_padded*sizeof(double*));
+  double* eigenvectors_imag = (double*)malloc(states*states_padded*sizeof(double));
+  //double* inv_eigenvectors_real = (double**)malloc(states*states_padded*sizeof(double*));
+  double* inv_eigenvectors_imag = (double*)malloc(states*states_padded*sizeof(double));
 
-  double* eigenvalues_real = (double*)malloc(states*sizeof(double));
+  //double* eigenvalues_real = (double*)malloc(states*sizeof(double));
   double* eigenvalues_imag = (double*)malloc(states*sizeof(double));
 
-  pll_nonsym_eigen(a, states, eigenvalues_real, eigenvalues_imag, eigenvectors_real, eigenvectors_imag);
-
-  /* store eigen vectors */
-  for (i = 0; i < states; ++i)
-    memcpy(eigenvecs + i*states_padded, eigenvectors_real[i], states*sizeof(double));
-
-  /* store eigen values */
-  memcpy(eigenvals, eigenvalues_real, states*sizeof(double));
+  pll_nonsym_eigen(
+          a,
+          states,
+          states_padded,
+          eigenvals,
+          eigenvalues_imag,
+          eigenvecs,
+          eigenvectors_imag,
+          inv_eigenvecs,
+          inv_eigenvectors_imag);
 
   /* store inverse eigen vectors */
+#if 0
   for (k = 0, i = 0; i < states; ++i)
   {
     for (j = i; j < states_padded*states; j += states_padded)
@@ -363,6 +390,7 @@ PLL_EXPORT int pll_update_eigen(pll_partition_t * partition,
   }
 
   assert(k == states_padded*states);
+#endif
 
   /* multiply the inverse eigen vectors from the left with sqrt(pi)^-1 */
   for (i = 0; i < states; ++i)
@@ -381,14 +409,12 @@ PLL_EXPORT int pll_update_eigen(pll_partition_t * partition,
   for (i = 0; i < states; ++i)
     free(a[i]);
   free(a);
-  free(eigenvalues_real);
+  //free(eigenvalues_real);
   free(eigenvalues_imag);
-  for (size_t i = 0; i < states; ++i) {
-      free(eigenvectors_real[i]);
-      free(eigenvectors_imag[i]);
-  }
-  free(eigenvectors_real);
+  //free(eigenvectors_real);
   free(eigenvectors_imag);
+  //free(inv_eigenvectors_real);
+  free(inv_eigenvectors_imag);
 
   return PLL_SUCCESS;
 }
