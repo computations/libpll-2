@@ -23,6 +23,22 @@
 #include <gsl/gsl_eigen.h>
 #include <gsl/gsl_linalg.h>
 
+#define PLL_MEMORY_ALLOC_CHECK(ptr) {\
+  if(ptr==NULL){\
+    pll_errno = PLL_ERROR_MEM_ALLOC;\
+    snprintf(pll_errmsg, 200, "Could not allocate memory for %s", #ptr ); \
+    return PLL_FAILURE;\
+  } \
+}
+
+#define PLL_MEMORY_ALLOC_CHECK_MSG(ptr, msg...) {\
+  if(ptr==NULL){\
+    pll_errno = PLL_ERROR_MEM_ALLOC;\
+    snprintf(pll_errmsg, 200, msg); \
+    return PLL_FAILURE;\
+  } \
+}
+
 static int mytqli(double *d, double *e, const unsigned int n, double **z)
 {
   unsigned int     m, l, iter, i, k;
@@ -179,7 +195,7 @@ static void mytred2(double **a, const unsigned int n, double *d, double *e)
     }
 }
 
-void pll_nonsym_eigen(double** A,
+int pll_nonsym_eigen(double** A,
         size_t n,
         size_t n_padded,
         double* eigenvalues_real,
@@ -189,30 +205,53 @@ void pll_nonsym_eigen(double** A,
         double* inv_eigenvectors_real,
         double* inv_eigenvectors_imag)
 {
-    gsl_eigen_nonsymmv_workspace* ws = gsl_eigen_nonsymmv_alloc(n);
-    gsl_matrix* M = gsl_matrix_alloc(n,n);
-    for (size_t i = 0; i < n; ++i) {
-        for (size_t j = 0; j < n; ++j) {
+    int signum;
+    size_t i, j;
+    gsl_eigen_nonsymmv_workspace *ws;
+    gsl_vector_complex *eigenvalues;
+    gsl_matrix *M;
+    gsl_matrix_complex *eigenvectors, *inv_eigenvectors, *tmp_eigenvectors;
+    gsl_permutation *lu_perm;
+
+
+    ws = gsl_eigen_nonsymmv_alloc(n);
+    PLL_MEMORY_ALLOC_CHECK_MSG(ws, "Could not allocate memory for the GSL workspace");
+    M = gsl_matrix_alloc(n,n);
+    PLL_MEMORY_ALLOC_CHECK_MSG(M, "Could not allocate memory for a matrix");
+
+    for (i = 0; i < n; ++i) {
+        for (j = 0; j < n; ++j) {
             gsl_matrix_set(M, i, j, A[i][j]);
         }
     }
 
-    gsl_matrix_complex* eigenvectors = gsl_matrix_complex_alloc(n,n);
-    gsl_vector_complex* eigenvalues = gsl_vector_complex_alloc(n);
+    eigenvectors = gsl_matrix_complex_alloc(n,n);
+    PLL_MEMORY_ALLOC_CHECK(eigenvectors);
+    eigenvalues = gsl_vector_complex_alloc(n);
+    PLL_MEMORY_ALLOC_CHECK(eigenvalues);
 
     gsl_eigen_nonsymmv(M, eigenvalues, eigenvectors, ws);
 
-    int signum = 1;
-    gsl_matrix_complex* inv_eigenvectors = gsl_matrix_complex_alloc(n,n);
-    gsl_matrix_complex* tmp_eigenvectors = gsl_matrix_complex_alloc(n,n);
+    signum = 1;
+    inv_eigenvectors = gsl_matrix_complex_alloc(n,n);
+    PLL_MEMORY_ALLOC_CHECK(inv_eigenvectors);
+    tmp_eigenvectors = gsl_matrix_complex_alloc(n,n);
     gsl_matrix_complex_memcpy(tmp_eigenvectors, eigenvectors);
-    gsl_permutation* identity = gsl_permutation_alloc(n);
+    PLL_MEMORY_ALLOC_CHECK(tmp_eigenvectors);
+    lu_perm = gsl_permutation_alloc(n);
+    PLL_MEMORY_ALLOC_CHECK(lu_perm);
 
-    gsl_linalg_complex_LU_decomp(tmp_eigenvectors, identity, &signum);
-    gsl_linalg_complex_LU_invert(tmp_eigenvectors, identity, inv_eigenvectors);
+    gsl_linalg_complex_LU_decomp(tmp_eigenvectors, lu_perm, &signum);
+    gsl_linalg_complex_LU_invert(tmp_eigenvectors, lu_perm, inv_eigenvectors);
 
-    //TODO: make this not awful
-    for (size_t i = 0; i < n; ++i) {
+    /*
+     * TODO: Currently, to access elements I use the range checked matrix_get
+     * functions. We can speed these up by defining GSL_RANGE_CHECK_OFF and
+     * recompiling. It might be easier to read memory directly from the struct
+     * instead. The only problem is that the way that complex numbers are
+     * stored is not well documented.
+     */
+    for (i = 0; i < n; ++i) {
         eigenvalues_real[i] = GSL_REAL(gsl_vector_complex_get(eigenvalues, i));
         eigenvalues_imag[i] = GSL_IMAG(gsl_vector_complex_get(eigenvalues, i));
     }
@@ -222,8 +261,8 @@ void pll_nonsym_eigen(double** A,
      * fortran order for rows and columns. GSL uses c order, so we need to
      * transpose the GSL results to match the rest of the program.
      */
-    for (size_t i = 0; i < n; ++i) {
-        for (size_t j = 0; j < n; ++j) {
+    for (i = 0; i < n; ++i) {
+        for (j = 0; j < n; ++j) {
             eigenvectors_real[j*n_padded + i] =
                 GSL_REAL(gsl_matrix_complex_get(eigenvectors, i, j));
             eigenvectors_imag[j*n_padded + i] =
@@ -241,7 +280,8 @@ void pll_nonsym_eigen(double** A,
     gsl_matrix_complex_free(inv_eigenvectors);
     gsl_matrix_complex_free(tmp_eigenvectors);
     gsl_vector_complex_free(eigenvalues);
-    gsl_permutation_free(identity);
+    gsl_permutation_free(lu_perm);
+    return PLL_SUCCESS;
 }
 
 /* TODO: Add code for SSE/AVX. Perhaps allocate qmatrix in one chunk to avoid the
@@ -318,8 +358,9 @@ static double ** create_ratematrix(double * params,
 PLL_EXPORT int pll_update_eigen(pll_partition_t * partition,
                                 unsigned int params_index)
 {
+  int result_no;
   unsigned int i,j,k;
-  double *e, *d;
+  double *e = NULL, *d = NULL;
   double ** a;
 
   double * eigenvecs = partition->eigenvecs[params_index];
@@ -331,6 +372,11 @@ PLL_EXPORT int pll_update_eigen(pll_partition_t * partition,
   unsigned int states = partition->states;
   unsigned int states_padded = partition->states_padded;
 
+  double* eigenvecs_imag = NULL;
+  double* inv_eigenvecs_imag = NULL;
+  double* eigenvals_imag = NULL;
+
+
   a = create_ratematrix(subst_params,
                         freqs,
                         states);
@@ -341,56 +387,62 @@ PLL_EXPORT int pll_update_eigen(pll_partition_t * partition,
     return PLL_FAILURE;
   }
 
-  d = (double *)malloc(states*sizeof(double));
-  e = (double *)malloc(states*sizeof(double));
-  if (!d || !e)
+
+  if(partition->attributes & PLL_ATTRIB_NONREV)
   {
-    if (d) free(d);
-    if (e) free(e);
-    for(i = 0; i < states; ++i) free(a[i]);
-    free(a);
-    pll_errno = PLL_ERROR_MEM_ALLOC;
-    snprintf(pll_errmsg, 200, "Unable to allocate enough memory.");
-    return PLL_FAILURE;
+    eigenvecs_imag = partition->eigenvecs_imag[params_index];
+    inv_eigenvecs_imag = partition->inv_eigenvecs_imag[params_index];
+    eigenvals_imag = partition->eigenvals_imag[params_index];
+    result_no = pll_nonsym_eigen(
+            a,
+            states,
+            states_padded,
+            eigenvals,
+            eigenvals_imag,
+            eigenvecs,
+            eigenvecs_imag,
+            inv_eigenvecs,
+            inv_eigenvecs_imag);
+    if(result_no == PLL_FAILURE){
+      return PLL_FAILURE;
+    }
   }
-
-  /*
-  mytred2(a, states, d, e);
-  mytqli(d, e, states, a);
-  */
-
-  //double* eigenvectors_real = (double**)malloc(states*states_padded*sizeof(double*));
-  double* eigenvectors_imag = (double*)malloc(states*states_padded*sizeof(double));
-  //double* inv_eigenvectors_real = (double**)malloc(states*states_padded*sizeof(double*));
-  double* inv_eigenvectors_imag = (double*)malloc(states*states_padded*sizeof(double));
-
-  //double* eigenvalues_real = (double*)malloc(states*sizeof(double));
-  double* eigenvalues_imag = (double*)malloc(states*sizeof(double));
-
-  pll_nonsym_eigen(
-          a,
-          states,
-          states_padded,
-          eigenvals,
-          eigenvalues_imag,
-          eigenvecs,
-          eigenvectors_imag,
-          inv_eigenvecs,
-          inv_eigenvectors_imag);
-
-  /* store inverse eigen vectors */
-#if 0
-  for (k = 0, i = 0; i < states; ++i)
+  else
   {
-    for (j = i; j < states_padded*states; j += states_padded)
-      inv_eigenvecs[k++] = eigenvecs[j];
+    d = (double *)malloc(states*sizeof(double));
+    e = (double *)malloc(states*sizeof(double));
+    if (!d || !e)
+    {
+      if (d) free(d);
+      if (e) free(e);
+      for(i = 0; i < states; ++i) free(a[i]);
+      free(a);
+      pll_errno = PLL_ERROR_MEM_ALLOC;
+      snprintf(pll_errmsg, 200, "Unable to allocate enough memory.");
+      return PLL_FAILURE;
+    }
+    mytred2(a, states, d, e);
+    mytqli(d, e, states, a);
 
-    /* account for padding */
-    k += states_padded - states;
+    /* store eigen vectors */
+    for (i = 0; i < states; ++i)
+      memcpy(eigenvecs + i*states_padded, a[i], states*sizeof(double));
+
+    /* store eigen values */
+    memcpy(eigenvals, d, states*sizeof(double));
+
+    /* store inverse eigen vectors */
+    for (k = 0, i = 0; i < states; ++i)
+    {
+      for (j = i; j < states_padded*states; j += states_padded)
+        inv_eigenvecs[k++] = eigenvecs[j];
+
+      /* account for padding */
+      k += states_padded - states;
+    }
+
+    assert(k == states_padded*states);
   }
-
-  assert(k == states_padded*states);
-#endif
 
   /* multiply the inverse eigen vectors from the left with sqrt(pi)^-1 */
   for (i = 0; i < states; ++i)
@@ -404,17 +456,17 @@ PLL_EXPORT int pll_update_eigen(pll_partition_t * partition,
 
   partition->eigen_decomp_valid[params_index] = 1;
 
-  free(d);
-  free(e);
+  if(d)
+  {
+    free(d);
+  }
+  if(e)
+  {
+    free(e);
+  }
   for (i = 0; i < states; ++i)
     free(a[i]);
   free(a);
-  //free(eigenvalues_real);
-  free(eigenvalues_imag);
-  //free(eigenvectors_real);
-  free(eigenvectors_imag);
-  //free(inv_eigenvectors_real);
-  free(inv_eigenvectors_imag);
 
   return PLL_SUCCESS;
 }
