@@ -22,6 +22,78 @@
 #include <limits.h>
 #include "pll.h"
 
+PLL_EXPORT int pll_core_update_sumtable_nonrev(unsigned int states,
+                                               unsigned int sites,
+                                               unsigned int parent_sites,
+                                               unsigned int rate_cats,
+                                               const double * clvp,
+                                               const double * clvc,
+                                               const unsigned int * parent_scaler,
+                                               const unsigned int * child_scaler,
+                                               double * const * eigenvecs,
+                                               double * const * eigenvecs_imag,
+                                               double * const * inv_eigenvecs,
+                                               double * const * inv_eigenvecs_imag,
+                                               double * const * freqs,
+                                               double *sumtable,
+                                               const unsigned int * parent_site_id,
+                                               const unsigned int * child_site_id,
+                                               double * bclv_buffer,
+                                               unsigned int inv,
+                                               unsigned int attrib)
+{
+  const double *t_eigenvecs;
+  const double *t_eigenvecs_imag;
+  const double *t_inv_eigenvecs;
+  const double *t_inv_eigenvecs_imag;
+  const double *t_freqs;
+  double *t_sumtable = sumtable;
+  unsigned int n, i, j, k;
+  double lefterm_real, lefterm_imag, righterm_real, righterm_imag;
+  unsigned int states_padded = states;
+  unsigned int span_padded = states_padded * rate_cats;
+
+  for (n = 0; n < sites; n++)
+  {
+    unsigned int pid = PLL_GET_ID(parent_site_id, n);
+    unsigned int cid = PLL_GET_ID(child_site_id, n);
+    const double * t_clvp = &clvp[pid * span_padded];
+    const double * t_clvc = &clvc[cid * span_padded];
+    for (i = 0; i < rate_cats; ++i)
+    {
+      t_eigenvecs          = eigenvecs[i];
+      t_eigenvecs_imag     = eigenvecs_imag[i];
+      t_inv_eigenvecs      = inv_eigenvecs[i];
+      t_inv_eigenvecs_imag = inv_eigenvecs_imag[i];
+      t_freqs              = freqs[i];
+
+      for (j = 0; j < states; ++j)
+      {
+        lefterm_real = 0;
+        lefterm_imag = 0;
+        righterm_real = 0;
+        righterm_imag = 0;
+        for (k = 0; k < states; ++k)
+        {
+          lefterm_real  += t_clvp[k] * t_freqs[k] *
+                                      t_inv_eigenvecs[k * states_padded + j];
+          lefterm_imag  += t_clvp[k] * t_freqs[k] *
+                                      t_inv_eigenvecs_imag[k * states_padded + j];
+          righterm_real += t_eigenvecs[j * states_padded + k] * t_clvc[k];
+          righterm_real += t_eigenvecs_imag[j * states_padded + k] * t_clvc[k];
+        }
+        t_sumtable[j] = lefterm_real * righterm_real - lefterm_imag * righterm_imag;
+        assert(fabs(lefterm_real * righterm_imag - righterm_real * lefterm_imag) < PLL_MISC_EPSILON);
+
+      }
+      t_clvc += states;
+      t_clvp += states;
+      t_sumtable += states;
+    }
+  }
+  return PLL_SUCCESS;
+}
+
 PLL_EXPORT int pll_core_update_sumtable_repeats(unsigned int states,
                                                 unsigned int sites,
                                                 unsigned int parent_sites,
@@ -40,7 +112,7 @@ PLL_EXPORT int pll_core_update_sumtable_repeats(unsigned int states,
                                                 unsigned int inv,
                                                 unsigned int attrib)
 {
-  int (*core_update_sumtable) (unsigned int states, 
+  int (*core_update_sumtable) (unsigned int states,
                                unsigned int sites,
                                unsigned int parent_sites,
                                unsigned int rate_cats,
@@ -57,7 +129,7 @@ PLL_EXPORT int pll_core_update_sumtable_repeats(unsigned int states,
                                double * bclv_buffer,
                                unsigned int inv,
                                unsigned int attrib) = 0x0;
-  unsigned int use_bclv = ( bclv_buffer && (parent_sites < (sites * 2) / 3)); 
+  unsigned int use_bclv = ( bclv_buffer && (parent_sites < (sites * 2) / 3));
   core_update_sumtable = pll_core_update_sumtable_repeats_generic;
 #ifdef HAVE_AVX
   if (attrib & PLL_ATTRIB_ARCH_AVX &&  PLL_STAT(avx_present))
@@ -693,7 +765,8 @@ static void core_site_likelihood_derivatives(unsigned int states,
   }
 }
 
-PLL_EXPORT int pll_core_likelihood_derivatives(unsigned int states,
+
+PLL_EXPORT int _pll_core_likelihood_derivatives(unsigned int states,
                                                unsigned int sites,
                                                unsigned int rate_cats,
                                                const double * rate_weights,
@@ -707,26 +780,22 @@ PLL_EXPORT int pll_core_likelihood_derivatives(unsigned int states,
                                                const double * prop_invar,
                                                double * const * freqs,
                                                const double * rates,
-                                               double * const * eigenvals,
                                                const double * sumtable,
+                                               double * diagptable,
                                                double * d_f,
                                                double * dd_f,
                                                unsigned int attrib)
 {
-  unsigned int n, i, j;
+  unsigned int n;
   unsigned int ef_sites;
 
   const double * sum;
   double deriv1, deriv2;
   double site_lk[3];
 
-  const double * t_eigenvals;
-  double t_branch_length;
   unsigned int scale_factors;
 
-  double *diagptable, *diagp;
   const int * invariant_ptr;
-  double ki;
 
   unsigned int states_padded = states;
 
@@ -743,33 +812,6 @@ PLL_EXPORT int pll_core_likelihood_derivatives(unsigned int states,
 
   *d_f = 0.0;
   *dd_f = 0.0;
-
-  diagptable = (double *) pll_aligned_alloc(
-                                      rate_cats * states * 4 * sizeof(double),
-                                      PLL_ALIGNMENT_AVX);
-  if (!diagptable)
-  {
-    pll_errno = PLL_ERROR_MEM_ALLOC;
-    snprintf (pll_errmsg, 200, "Cannot allocate memory for diagptable");
-    return PLL_FAILURE;
-  }
-
-  /* pre-compute the derivatives of the P matrix for all discrete GAMMA rates */
-  diagp = diagptable;
-  for(i = 0; i < rate_cats; ++i)
-  {
-    t_eigenvals = eigenvals[i];
-    ki = rates[i]/(1.0 - prop_invar[i]);
-    t_branch_length = branch_length;
-    for(j = 0; j < states; ++j)
-    {
-      diagp[0] = exp(t_eigenvals[j] * ki * t_branch_length);
-      diagp[1] = t_eigenvals[j] * ki * diagp[0];
-      diagp[2] = t_eigenvals[j] * ki * t_eigenvals[j] * ki * diagp[0];
-      diagp[3] = 0;
-      diagp += 4;
-    }
-  }
 
 // SSE3 vectorization in missing as of now
 #ifdef HAVE_SSE3
@@ -926,4 +968,163 @@ PLL_EXPORT int pll_core_likelihood_derivatives(unsigned int states,
   pll_aligned_free (diagptable);
 
   return PLL_SUCCESS;
+}
+
+PLL_EXPORT int pll_core_likelihood_derivatives(unsigned int states,
+                                               unsigned int sites,
+                                               unsigned int rate_cats,
+                                               const double * rate_weights,
+                                               const unsigned int * parent_scaler,
+                                               const unsigned int * child_scaler,
+                                               unsigned int parent_sites,
+                                               unsigned int child_ids,
+                                               const int * invariant,
+                                               const unsigned int * pattern_weights,
+                                               double branch_length,
+                                               const double * prop_invar,
+                                               double * const * freqs,
+                                               const double * rates,
+                                               double * const * eigenvals,
+                                               const double * sumtable,
+                                               double * d_f,
+                                               double * dd_f,
+                                               unsigned int attrib)
+{
+  unsigned int i, j;
+  double * t_eigenvals;
+  double ki;
+  double t_branch_length;
+  double * diagptable = (double *) pll_aligned_alloc(
+                                      rate_cats * states * 4 * sizeof(double),
+                                      PLL_ALIGNMENT_AVX);
+  double* diagp;
+  if (!diagptable)
+  {
+    pll_errno = PLL_ERROR_MEM_ALLOC;
+    snprintf (pll_errmsg, 200, "Cannot allocate memory for diagptable");
+    return PLL_FAILURE;
+  }
+
+  /* pre-compute the derivatives of the P matrix for all discrete GAMMA rates */
+  diagp = diagptable;
+  for(i = 0; i < rate_cats; ++i)
+  {
+    t_eigenvals = eigenvals[i];
+    ki = rates[i]/(1.0 - prop_invar[i]);
+    t_branch_length = branch_length;
+    for(j = 0; j < states; ++j)
+    {
+      diagp[0] = exp(t_eigenvals[j] * ki * t_branch_length);
+      diagp[1] = t_eigenvals[j] * ki * diagp[0];
+      diagp[2] = t_eigenvals[j] * ki * t_eigenvals[j] * ki * diagp[0];
+      diagp[3] = 0;
+      diagp += 4;
+    }
+  }
+  return _pll_core_likelihood_derivatives(states,
+                                   sites,
+                                   rate_cats,
+                                   rate_weights,
+                                   parent_scaler,
+                                   child_scaler,
+                                   parent_sites,
+                                   child_ids,
+                                   invariant,
+                                   pattern_weights,
+                                   branch_length,
+                                   prop_invar,
+                                   freqs,
+                                   rates,
+                                   sumtable,
+                                   diagptable,
+                                   d_f,
+                                   dd_f,
+                                   attrib);
+}
+
+PLL_EXPORT int pll_core_likelihood_derivatives_nonrev(unsigned int states,
+                                               unsigned int sites,
+                                               unsigned int rate_cats,
+                                               const double * rate_weights,
+                                               const unsigned int * parent_scaler,
+                                               const unsigned int * child_scaler,
+                                               unsigned int parent_sites,
+                                               unsigned int child_ids,
+                                               const int * invariant,
+                                               const unsigned int * pattern_weights,
+                                               double branch_length,
+                                               const double * prop_invar,
+                                               double * const * freqs,
+                                               const double * rates,
+                                               double * const * eigenvals,
+                                               double * const * eigenvals_imag,
+                                               const double * sumtable,
+                                               double * d_f,
+                                               double * dd_f,
+                                               unsigned int attrib)
+{
+  unsigned int i, j;
+  double * t_eigenvals, * t_eigenvals_imag;
+  double ki;
+  double t_branch_length;
+  double * diagptable = (double *) pll_aligned_alloc(
+                                      rate_cats * states * 4 * sizeof(double),
+                                      PLL_ALIGNMENT_AVX);
+  double* diagp;
+  if (!diagptable)
+  {
+    pll_errno = PLL_ERROR_MEM_ALLOC;
+    snprintf (pll_errmsg, 200, "Cannot allocate memory for diagptable");
+    return PLL_FAILURE;
+  }
+
+  diagp = diagptable;
+  for(i = 0; i < rate_cats; ++i)
+  {
+    t_eigenvals = eigenvals[i];
+    t_eigenvals_imag = eigenvals_imag[i];
+    ki = rates[i]/(1.0 - prop_invar[i]);
+    t_branch_length = branch_length;
+    for(j = 0; j < states; ++j)
+    {
+      /*
+       * We only calculate the real portion of the diagptable here, because
+       * later in the computation, we will add these together. Because there
+       * are sure to be conjugate pairs in the eigenvalues, the imaginary
+       * portion will cancel out then. Furthermore, since we are adding the
+       * numbers together, they have no more interaction with the real portion
+       * after this. We still need to account for the imaginary portion here.
+       */
+      double cos_brt = cos(t_eigenvals_imag[j] * ki * t_branch_length);
+      double sin_brt = sin(t_eigenvals_imag[j] * ki * t_branch_length);
+      double eart_cos_brt = exp(t_eigenvals[j] * ki * t_branch_length) * cos_brt;
+      double eart_sin_brt = exp(t_eigenvals[j] * ki * t_branch_length) * sin_brt;
+      diagp[0] = eart_cos_brt;
+      diagp[1] = eart_cos_brt * t_eigenvals[j] * ki - eart_sin_brt * ki * t_eigenvals_imag[j];
+      diagp[2] = ki * ki * ( eart_cos_brt * t_eigenvals[j] * t_eigenvals[j]
+              - 2 * t_eigenvals[j] * t_eigenvals_imag[j] * eart_sin_brt
+              - t_eigenvals_imag[j] * t_eigenvals_imag[j] * eart_sin_brt);
+      diagp[3] = 0;
+      diagp += 4;
+    }
+  }
+  return _pll_core_likelihood_derivatives(states,
+                                   sites,
+                                   rate_cats,
+                                   rate_weights,
+                                   parent_scaler,
+                                   child_scaler,
+                                   parent_sites,
+                                   child_ids,
+                                   invariant,
+                                   pattern_weights,
+                                   branch_length,
+                                   prop_invar,
+                                   freqs,
+                                   rates,
+                                   sumtable,
+                                   diagptable,
+                                   d_f,
+                                   dd_f,
+                                   attrib);
 }

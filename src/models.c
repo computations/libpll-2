@@ -288,14 +288,23 @@ int pll_nonsym_eigen(double** A,
 complex checking when to dealloc */
 static double ** create_ratematrix(double * params,
                                    double * frequencies,
-                                   unsigned int states)
+                                   unsigned int states,
+                                   int unsymm)
 {
   unsigned int i,j,k,success;
 
   double ** qmatrix;
 
+  unsigned int params_count = 0;
+  if (unsymm)
+  {
+    params_count = states * states - states;
+  }
+  else
+  {
+    params_count = (states * states-states) / 2;
+  }
   /* normalize substitution parameters */
-  unsigned int params_count = (states*states - states) / 2;
   double * params_normalized = (double *)malloc(sizeof(double) * params_count);
   if (!params_normalized)
     return NULL;
@@ -326,20 +335,48 @@ static double ** create_ratematrix(double * params,
     return NULL;
   }
 
-  /* construct a matrix equal to sqrt(pi) * Q sqrt(pi)^-1 in order to ensure
-     it is symmetric */
 
-  for (i = 0; i < states; ++i) qmatrix[i][i] = 0;
-
-  k = 0;
-  for (i = 0; i < states; ++i)
+  if (unsymm)
   {
-    for (j = i+1; j < states; ++j)
+    k = 0;
+    for (i = 0; i < states; ++i)
     {
-      double factor = params_normalized[k++];
-      qmatrix[i][j] = qmatrix[j][i] = factor * sqrt(frequencies[i] * frequencies[j]);
-      qmatrix[i][i] -= factor * frequencies[j];
-      qmatrix[j][j] -= factor * frequencies[i];
+      double row_sum = 0;
+      for (j = 0; j < states; ++j)
+      {
+        if (i == j)
+        {
+          continue;
+        }
+        double factor = params_normalized[k++];
+        qmatrix[i][j] = factor * sqrt(frequencies[i] * frequencies[j]);
+        row_sum += qmatrix[i][j];
+      }
+      qmatrix[i][i] = -1 * row_sum;
+    }
+  }
+  else
+  {
+    /* construct a matrix equal to sqrt(pi) * Q sqrt(pi)^-1 in order to ensure
+       it is symmetric */
+    /*
+     * The above comment is incorrect. This computes 
+     *      Q .* sqrt(pi*pi'),
+     * I.E. the elementwise product of Q with the outer product of pi with
+     * itself. This creates a symmetric matrix, if Q was symmetric.
+     */
+    for (i = 0; i < states; ++i) qmatrix[i][i] = 0;
+
+    k = 0;
+    for (i = 0; i < states; ++i)
+    {
+      for (j = i+1; j < states; ++j)
+      {
+        double factor = params_normalized[k++];
+        qmatrix[i][j] = qmatrix[j][i] = factor * sqrt(frequencies[i] * frequencies[j]);
+        qmatrix[i][i] -= factor * frequencies[j];
+        qmatrix[j][j] -= factor * frequencies[i];
+      }
     }
   }
 
@@ -379,7 +416,8 @@ PLL_EXPORT int pll_update_eigen(pll_partition_t * partition,
 
   a = create_ratematrix(subst_params,
                         freqs,
-                        states);
+                        states,
+                        partition->attributes & PLL_ATTRIB_NONREV);
   if (!a)
   {
     pll_errno = PLL_ERROR_MEM_ALLOC;

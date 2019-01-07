@@ -202,7 +202,6 @@ if(BUILD_LIBPLL_STATIC)
 endif()
 
 message(STATUS "${PLL_LIBRARIES}")
-target_link_libraries(${PLL_LIBRARIES}, gsl)
 set_target_properties(${PLL_LIBRARIES} PROPERTIES OUTPUT_NAME "pll")
 
 

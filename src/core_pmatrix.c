@@ -21,6 +21,116 @@
 
 #include "pll.h"
 
+PLL_EXPORT int pll_core_update_pmatrix_nonrev(double ** pmatrix,
+                                              unsigned int states,
+                                              unsigned int states_padded,
+                                              unsigned int rate_cats,
+                                              const double * rates,
+                                              const double * branch_lengths,
+                                              const unsigned int * matrix_indices,
+                                              const unsigned int * params_indices,
+                                              const double * prop_invar,
+                                              double * const * eigenvals,
+                                              double * const * eigenvals_imag,
+                                              double * const * eigenvecs,
+                                              double * const * eigenvecs_imag,
+                                              double * const * inv_eigenvecs,
+                                              double * const * inv_eigenvecs_imag,
+                                              unsigned int count)
+{
+  double real, imag;
+  double * expd;
+  double * expd_imag;
+  double * tempd;
+  double * tempd_imag;
+  double * pmat;
+  double * cur_evals;
+  double * cur_evals_imag;
+  double * cur_evecs;
+  double * cur_evecs_imag;
+  double * cur_inv_evecs;
+  double * cur_inv_evecs_imag;
+  double cur_pinv;
+  expd = (double*)malloc(states * sizeof(double));
+  expd_imag = (double*)malloc(states * sizeof(double));
+  tempd = (double*)malloc(states * states * sizeof(double));
+  tempd_imag = (double*)malloc(states * states * sizeof(double));
+
+  for (unsigned int branch_index = 0; branch_index < count; ++branch_index) {
+    for (unsigned int rate_cat = 0; rate_cat < rate_cats; ++rate_cat) {
+      pmat = pmatrix[matrix_indices[branch_index]] + rate_cat*states*states_padded;
+      cur_evals = eigenvals[params_indices[rate_cat]];
+      cur_evals_imag = eigenvals_imag[params_indices[rate_cat]];
+      cur_evecs = eigenvecs[params_indices[rate_cat]];
+      cur_evecs_imag = eigenvecs[params_indices[rate_cat]];
+      cur_inv_evecs = inv_eigenvecs[params_indices[rate_cat]];
+      cur_inv_evecs_imag = inv_eigenvecs_imag[params_indices[rate_cat]];
+      cur_pinv = prop_invar[params_indices[rate_cat]];
+
+      /*
+       * compute the diagonal matrix using euler's formula:
+       *
+       * e^(a+bi) = e^a * (cos(b) + i*sin(b))
+       *
+       */
+      if (cur_pinv > 0){
+        for (unsigned int i = 0; i < states; ++i) {
+          real = cur_evals[i] * rates[branch_index] *
+            branch_lengths[branch_index] / (1.0 - cur_pinv);
+          imag = cur_evals_imag[i] * rates[branch_index] *
+            branch_lengths[branch_index] / (1.0 - cur_pinv);
+
+          expd[i] = exp(real) * cos(imag);
+          expd_imag[i] = exp(real) * sin(imag);
+        }
+      }
+      else{
+        for (unsigned int i = 0; i < states; ++i) {
+          real = cur_evals[i] * rates[branch_index] * branch_lengths[branch_index];
+          imag = cur_evals_imag[i] * rates[branch_index] * branch_lengths[branch_index];
+
+          expd[i] = exp(real) * cos(imag);
+          expd_imag[i] = exp(real) * sin(imag);
+        }
+      }
+
+      /* compute T = E * D, where D is the diagonal matrix calculated above */
+      for (unsigned int i = 0; i < states; ++i) {
+        for (unsigned int j = 0; j < states; ++j) {
+          real = cur_evecs[i*states + j];
+          imag = cur_evecs_imag[i*states+j];
+          tempd[i*states + j] = expd[j] * real - expd_imag[j] * imag;
+          tempd_imag[i*states + j] = real * expd_imag[j] + imag * expd[j];
+        }
+      }
+
+      /* compute P = T * E^-1 */
+      for (unsigned int i = 0; i < states; ++i) {
+        for (unsigned int j = 0; j < states; ++j) {
+          pmat[i*states_padded+j] = (i==j) ? 1.0 : 0.0;
+          for (unsigned int k = 0; k < states; ++k) {
+            pmat[i * states_padded + j] += tempd[i * states + k] *
+              cur_inv_evecs[k * states + j] - tempd_imag[i * states + k] *
+              cur_inv_evecs_imag[k * states + j];
+
+            /*
+             * The imaginary portion of the pmatrix should be zero here. If its
+             * not, something has gone seriously wrong. So lets calculated it
+             * and check if the debug flag is set.
+             */
+#ifdef DEBUG
+            assert(fabs(tempd[i * states + k] cur_inv_evecs_imag[k * states +
+                  j] + tempd_imag[i * states + k] * cur_inv_evecs[k * states +
+                  j]) < PLL_MISC_EPSILON);
+#endif
+          }
+        }
+      }
+    }
+  }
+  return PLL_SUCCESS;
+}
+
 PLL_EXPORT int pll_core_update_pmatrix(double ** pmatrix,
                                        unsigned int states,
                                        unsigned int rate_cats,
