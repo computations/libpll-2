@@ -824,9 +824,18 @@ PLL_EXPORT pll_partition_t * pll_partition_create(unsigned int tips,
   }
   for (i = 0; i < partition->rate_matrices; ++i)
   {
-    partition->subst_params[i] = pll_aligned_alloc(((states*states-states)/2) *
-                                                    sizeof(double),
-                                                   partition->alignment);
+    if (attributes & PLL_ATTRIB_NONREV)
+    {
+      partition->subst_params[i] = pll_aligned_alloc(((states*states-states)) *
+                                                      sizeof(double),
+                                                     partition->alignment);
+    }
+    else
+    {
+      partition->subst_params[i] = pll_aligned_alloc(((states*states-states)/2) *
+                                                      sizeof(double),
+                                                     partition->alignment);
+    }
     if (!partition->subst_params[i])
     {
       dealloc_partition_data(partition);

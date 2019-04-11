@@ -256,21 +256,16 @@ int pll_nonsym_eigen(double** A,
         eigenvalues_imag[i] = GSL_IMAG(gsl_vector_complex_get(eigenvalues, i));
     }
 
-    /*
-     * The eigenvalue decompostion routine for the symmetric version uses
-     * fortran order for rows and columns. GSL uses c order, so we need to
-     * transpose the GSL results to match the rest of the program.
-     */
     for (i = 0; i < n; ++i) {
         for (j = 0; j < n; ++j) {
             eigenvectors_real[j*n_padded + i] =
-                GSL_REAL(gsl_matrix_complex_get(eigenvectors, i, j));
+                GSL_REAL(gsl_matrix_complex_get(eigenvectors, j, i));
             eigenvectors_imag[j*n_padded + i] =
-                GSL_IMAG(gsl_matrix_complex_get(eigenvectors, i, j));
+                GSL_IMAG(gsl_matrix_complex_get(eigenvectors, j, i));
             inv_eigenvectors_real[j*n_padded + i] =
-                GSL_REAL(gsl_matrix_complex_get(inv_eigenvectors,i,j));
+                GSL_REAL(gsl_matrix_complex_get(inv_eigenvectors,j,i));
             inv_eigenvectors_imag[j*n_padded + i] =
-                GSL_IMAG(gsl_matrix_complex_get(inv_eigenvectors,i,j));
+                GSL_IMAG(gsl_matrix_complex_get(inv_eigenvectors,j,i));
         }
     }
 
@@ -425,7 +420,6 @@ PLL_EXPORT int pll_update_eigen(pll_partition_t * partition,
     return PLL_FAILURE;
   }
 
-
   if(partition->attributes & PLL_ATTRIB_NONREV)
   {
     eigenvecs_imag = partition->eigenvecs_imag[params_index];
@@ -527,19 +521,40 @@ PLL_EXPORT int pll_update_prob_matrices(pll_partition_t * partition,
     }
   }
 
-  return pll_core_update_pmatrix(partition->pmatrix,
-                                 partition->states,
-                                 partition->rate_cats,
-                                 partition->rates,
-                                 branch_lengths,
-                                 matrix_indices,
-                                 params_indices,
-                                 partition->prop_invar,
-                                 partition->eigenvals,
-                                 partition->eigenvecs,
-                                 partition->inv_eigenvecs,
-                                 count,
-                                 partition->attributes);
+  if (partition->attributes & PLL_ATTRIB_NONREV){
+    return pll_core_update_pmatrix_nonrev(partition->pmatrix,
+                                   partition->states,
+                                   partition->states_padded,
+                                   partition->rate_cats,
+                                   partition->rates,
+                                   branch_lengths,
+                                   matrix_indices,
+                                   params_indices,
+                                   partition->prop_invar,
+                                   partition->eigenvals,
+                                   partition->eigenvals_imag,
+                                   partition->eigenvecs,
+                                   partition->eigenvecs_imag,
+                                   partition->inv_eigenvecs,
+                                   partition->inv_eigenvecs_imag,
+                                   count,
+                                   partition->attributes);
+  }
+  else{
+    return pll_core_update_pmatrix(partition->pmatrix,
+                                   partition->states,
+                                   partition->rate_cats,
+                                   partition->rates,
+                                   branch_lengths,
+                                   matrix_indices,
+                                   params_indices,
+                                   partition->prop_invar,
+                                   partition->eigenvals,
+                                   partition->eigenvecs,
+                                   partition->inv_eigenvecs,
+                                   count,
+                                   partition->attributes);
+  }
 }
 
 PLL_EXPORT void pll_set_frequencies(pll_partition_t * partition,
@@ -583,7 +598,15 @@ PLL_EXPORT void pll_set_subst_params(pll_partition_t * partition,
                                      unsigned int params_index,
                                      const double * params)
 {
-  unsigned int count = partition->states * (partition->states-1) / 2;
+  unsigned int count = 0;
+  if (partition->attributes & PLL_ATTRIB_NONREV)
+  {
+    count = partition->states * (partition->states-1);
+  }
+  else
+  {
+    count = partition->states * (partition->states-1) / 2;
+  }
 
   memcpy(partition->subst_params[params_index],
          params, count*sizeof(double));

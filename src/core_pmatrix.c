@@ -36,7 +36,8 @@ PLL_EXPORT int pll_core_update_pmatrix_nonrev(double ** pmatrix,
                                               double * const * eigenvecs_imag,
                                               double * const * inv_eigenvecs,
                                               double * const * inv_eigenvecs_imag,
-                                              unsigned int count)
+                                              unsigned int count,
+                                              unsigned int attributes)
 {
   double real, imag;
   double * expd;
@@ -62,7 +63,7 @@ PLL_EXPORT int pll_core_update_pmatrix_nonrev(double ** pmatrix,
       cur_evals = eigenvals[params_indices[rate_cat]];
       cur_evals_imag = eigenvals_imag[params_indices[rate_cat]];
       cur_evecs = eigenvecs[params_indices[rate_cat]];
-      cur_evecs_imag = eigenvecs[params_indices[rate_cat]];
+      cur_evecs_imag = eigenvecs_imag[params_indices[rate_cat]];
       cur_inv_evecs = inv_eigenvecs[params_indices[rate_cat]];
       cur_inv_evecs_imag = inv_eigenvecs_imag[params_indices[rate_cat]];
       cur_pinv = prop_invar[params_indices[rate_cat]];
@@ -75,9 +76,9 @@ PLL_EXPORT int pll_core_update_pmatrix_nonrev(double ** pmatrix,
        */
       if (cur_pinv > 0){
         for (unsigned int i = 0; i < states; ++i) {
-          real = cur_evals[i] * rates[branch_index] *
+          real = cur_evals[i] * rates[rate_cat] *
             branch_lengths[branch_index] / (1.0 - cur_pinv);
-          imag = cur_evals_imag[i] * rates[branch_index] *
+          imag = cur_evals_imag[i] * rates[rate_cat] *
             branch_lengths[branch_index] / (1.0 - cur_pinv);
 
           expd[i] = exp(real) * cos(imag);
@@ -86,8 +87,8 @@ PLL_EXPORT int pll_core_update_pmatrix_nonrev(double ** pmatrix,
       }
       else{
         for (unsigned int i = 0; i < states; ++i) {
-          real = cur_evals[i] * rates[branch_index] * branch_lengths[branch_index];
-          imag = cur_evals_imag[i] * rates[branch_index] * branch_lengths[branch_index];
+          real = cur_evals[i] * rates[rate_cat] * branch_lengths[branch_index];
+          imag = cur_evals_imag[i] * rates[rate_cat] * branch_lengths[branch_index];
 
           expd[i] = exp(real) * cos(imag);
           expd_imag[i] = exp(real) * sin(imag);
@@ -97,17 +98,17 @@ PLL_EXPORT int pll_core_update_pmatrix_nonrev(double ** pmatrix,
       /* compute T = E * D, where D is the diagonal matrix calculated above */
       for (unsigned int i = 0; i < states; ++i) {
         for (unsigned int j = 0; j < states; ++j) {
-          real = cur_evecs[i*states + j];
-          imag = cur_evecs_imag[i*states+j];
-          tempd[i*states + j] = expd[j] * real - expd_imag[j] * imag;
-          tempd_imag[i*states + j] = real * expd_imag[j] + imag * expd[j];
+          real = cur_evecs[i * states + j];
+          imag = cur_evecs_imag[i * states + j];
+          tempd[i * states + j] = expd[j] * real - expd_imag[j] * imag;
+          tempd_imag[i * states + j] = real * expd_imag[j] + imag * expd[j];
         }
       }
 
       /* compute P = T * E^-1 */
       for (unsigned int i = 0; i < states; ++i) {
         for (unsigned int j = 0; j < states; ++j) {
-          pmat[i*states_padded+j] = (i==j) ? 1.0 : 0.0;
+          pmat[i*states_padded+j] = 0.0;
           for (unsigned int k = 0; k < states; ++k) {
             pmat[i * states_padded + j] += tempd[i * states + k] *
               cur_inv_evecs[k * states + j] - tempd_imag[i * states + k] *
@@ -118,16 +119,18 @@ PLL_EXPORT int pll_core_update_pmatrix_nonrev(double ** pmatrix,
              * not, something has gone seriously wrong. So lets calculated it
              * and check if the debug flag is set.
              */
-#ifdef DEBUG
-            assert(fabs(tempd[i * states + k] cur_inv_evecs_imag[k * states +
+            assert(fabs(tempd[i * states + k] * cur_inv_evecs_imag[k * states +
                   j] + tempd_imag[i * states + k] * cur_inv_evecs[k * states +
                   j]) < PLL_MISC_EPSILON);
-#endif
           }
         }
       }
     }
   }
+  free(expd);
+  free(expd_imag);
+  free(tempd);
+  free(tempd_imag);
   return PLL_SUCCESS;
 }
 

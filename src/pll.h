@@ -128,7 +128,7 @@
 
 /* nonreversable model */
 
-#define PLL_ATTRIB_NONREV          (1 << 12)
+#define PLL_ATTRIB_NONREV          (1 << 11)
 
 /* topological rearrangements */
 
@@ -2345,6 +2345,23 @@ PLL_EXPORT int pll_core_update_pmatrix(double ** pmatrix,
                                        double * const * inv_eigenvecs,
                                        unsigned int count,
                                        unsigned int attrib);
+PLL_EXPORT int pll_core_update_pmatrix_nonrev(double ** pmatrix,
+                                              unsigned int states,
+                                              unsigned int states_padded,
+                                              unsigned int rate_cats,
+                                              const double * rates,
+                                              const double * branch_lengths,
+                                              const unsigned int * matrix_indices,
+                                              const unsigned int * params_indices,
+                                              const double * prop_invar,
+                                              double * const * eigenvals,
+                                              double * const * eigenvals_imag,
+                                              double * const * eigenvecs,
+                                              double * const * eigenvecs_imag,
+                                              double * const * inv_eigenvecs,
+                                              double * const * inv_eigenvecs_imag,
+                                              unsigned int count,
+                                              unsigned int attributes);
 
 /* functions in core_pmatrix_avx2.c */
 

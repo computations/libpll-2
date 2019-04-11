@@ -69,6 +69,7 @@ int main(int argc, char * argv[])
 
   /* check attributes */
   unsigned int attributes = get_attributes(argc, argv);
+  attributes |= PLL_ATTRIB_NONREV;
 
   pll_partition_t * partition;
   partition = pll_partition_create(
@@ -92,7 +93,7 @@ int main(int argc, char * argv[])
   double branch_lengths[4] = { 0.1, 0.2, 1, 1};
   double frequencies[4] = { 0.3, 0.4, 0.1, 0.2 };
   unsigned int matrix_indices[4] = { 0, 1, 2, 3 };
-  double subst_params[12] = {1,titv,1,1,titv,1};
+  double subst_params[12] = {1, titv, 1, 1, 1, titv, titv, 1, 1, 1, titv, 1};
   double * persite_lnl = (double *) malloc(n_sites * sizeof(double));
   double checksum;
 
