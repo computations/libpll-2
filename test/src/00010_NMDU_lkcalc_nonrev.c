@@ -24,7 +24,6 @@
 #define N_CAT_GAMMA 4
 #define FLOAT_PRECISION 4
 
-static double titv = 2.5;
 static double alpha = 0.5;
 static unsigned int n_cat_gamma = N_CAT_GAMMA;
 unsigned int params_indices[16] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
@@ -93,7 +92,10 @@ int main(int argc, char * argv[])
   double branch_lengths[4] = { 0.1, 0.2, 1, 1};
   double frequencies[4] = { 0.3, 0.4, 0.1, 0.2 };
   unsigned int matrix_indices[4] = { 0, 1, 2, 3 };
-  double subst_params[12] = {1, titv, 1, 1, 1, titv, titv, 1, 1, 1, titv, 1};
+  double subst_params[12] = {1, 2.5, 1,
+                             1, 1, 2.5,
+                             2.5, 1, 1,
+                             1, 2.5, 1};
   double * persite_lnl = (double *) malloc(n_sites * sizeof(double));
   double checksum;
 
