@@ -307,8 +307,10 @@ static double ** create_ratematrix(double * params,
   memcpy(params_normalized,params,params_count*sizeof(double));
 
   if (params_normalized[params_count - 1] > 0.0)
+  {
     for (i = 0; i < params_count; ++i)
       params_normalized[i] /= params_normalized[params_count - 1];
+  }
 
   /* allocate qmatrix */
   qmatrix = (double **)malloc(states*sizeof(double *));
@@ -367,134 +369,196 @@ static double ** create_ratematrix(double * params,
     {
       for (j = i+1; j < states; ++j)
       {
-        double factor = params_normalized[k++];
-        qmatrix[i][j] = qmatrix[j][i] = factor * sqrt(frequencies[i] * frequencies[j]);
-        qmatrix[i][i] -= factor * frequencies[j];
-        qmatrix[j][j] -= factor * frequencies[i];
+      double factor = (frequencies[i] <= PLL_EIGEN_MINFREQ ||
+                       frequencies[j] <= PLL_EIGEN_MINFREQ) ? 0 : params_normalized[k];
+      k++;
+      qmatrix[i][j] = qmatrix[j][i] = factor * sqrt(frequencies[i] * frequencies[j]);
+      qmatrix[i][i] -= factor * frequencies[j];
+      qmatrix[j][j] -= factor * frequencies[i];
       }
     }
   }
 
 
   double mean = 0;
-  for (i = 0; i < states; ++i) mean += frequencies[i] * (-qmatrix[i][i]);
   for (i = 0; i < states; ++i)
+    mean += frequencies[i] * (-qmatrix[i][i]);
+  for (i = 0; i < states; ++i)
+  {
     for (j = 0; j < states; ++j)
       qmatrix[i][j] /= mean;
+  }
 
   free(params_normalized);
 
   return qmatrix;
 }
 
+static unsigned int eliminate_zero_states(double **mat, double *forg,
+                                          unsigned int states, double *new_forg)
+{
+  unsigned int i, j, inew, jnew;
+  unsigned int new_states = 0;
+  for (i = 0; i < states; i++)
+  {
+    if (forg[i] > PLL_EIGEN_MINFREQ)
+      new_forg[new_states++] = forg[i];
+  }
+
+  assert(new_states <= states);
+
+  if (new_states < states)
+  {
+    for (i = 0, inew = 0; i < states; i++)
+    {
+      if (forg[i] > PLL_EIGEN_MINFREQ)
+      {
+        for (j = 0, jnew = 0; j < states; j++)
+        {
+          if (forg[j] > PLL_EIGEN_MINFREQ)
+          {
+            mat[inew][jnew] = mat[i][j];
+            jnew++;
+          }
+        }
+        inew++;
+      }
+    }
+  }
+
+  return new_states;
+}
+
 PLL_EXPORT int pll_update_eigen(pll_partition_t * partition,
                                 unsigned int params_index)
 {
+  unsigned int i, j;
   int result_no;
-  unsigned int i,j,k;
   double *e = NULL, *d = NULL;
-  double ** a;
+  double **a;
 
-  double * eigenvecs = partition->eigenvecs[params_index];
-  double * inv_eigenvecs = partition->inv_eigenvecs[params_index];
-  double * eigenvals = partition->eigenvals[params_index];
-  double * freqs = partition->frequencies[params_index];
-  double * subst_params = partition->subst_params[params_index];
+  double *eigenvecs = partition->eigenvecs[params_index];
+  double *inv_eigenvecs = partition->inv_eigenvecs[params_index];
+  double *eigenvals = partition->eigenvals[params_index];
+  double *freqs = partition->frequencies[params_index];
+  double *subst_params = partition->subst_params[params_index];
 
   unsigned int states = partition->states;
   unsigned int states_padded = partition->states_padded;
 
-  double* eigenvecs_imag = NULL;
-  double* inv_eigenvecs_imag = NULL;
-  double* eigenvals_imag = NULL;
+  double *eigenvecs_imag = NULL;
+  double *inv_eigenvecs_imag = NULL;
+  double *eigenvals_imag = NULL;
 
+  unsigned int inew, jnew;
+  unsigned int new_states;
+  double *new_freqs = NULL;
 
-  a = create_ratematrix(subst_params,
-                        freqs,
-                        states,
+  a = create_ratematrix(subst_params, freqs, states,
                         partition->attributes & PLL_ATTRIB_NONREV);
-  if (!a)
-  {
+  if (!a) {
     pll_errno = PLL_ERROR_MEM_ALLOC;
     snprintf(pll_errmsg, 200, "Unable to allocate enough memory.");
     return PLL_FAILURE;
   }
 
-  if(partition->attributes & PLL_ATTRIB_NONREV)
-  {
+  if (partition->attributes & PLL_ATTRIB_NONREV) {
     eigenvecs_imag = partition->eigenvecs_imag[params_index];
     inv_eigenvecs_imag = partition->inv_eigenvecs_imag[params_index];
     eigenvals_imag = partition->eigenvals_imag[params_index];
-    result_no = pll_nonsym_eigen(
-            a,
-            states,
-            states_padded,
-            eigenvals,
-            eigenvals_imag,
-            eigenvecs,
-            eigenvecs_imag,
-            inv_eigenvecs,
-            inv_eigenvecs_imag);
-    if(result_no == PLL_FAILURE){
+    result_no = pll_nonsym_eigen(a, states, states_padded, eigenvals,
+                                 eigenvals_imag, eigenvecs, eigenvecs_imag,
+                                 inv_eigenvecs, inv_eigenvecs_imag);
+    if (result_no == PLL_FAILURE) {
       return PLL_FAILURE;
     }
-  }
-  else
-  {
-    d = (double *)malloc(states*sizeof(double));
-    e = (double *)malloc(states*sizeof(double));
-    if (!d || !e)
-    {
-      if (d) free(d);
-      if (e) free(e);
-      for(i = 0; i < states; ++i) free(a[i]);
+  } else {
+    d = (double *)malloc(states * sizeof(double));
+    e = (double *)malloc(states * sizeof(double));
+    new_freqs = (double *)malloc(states * sizeof(double));
+    if (!d || !e || !new_freqs) {
+      if (d)
+        free(d);
+      if (e)
+        free(e);
+      if (new_freqs)
+        free(new_freqs);
+      for (i = 0; i < states; ++i)
+        free(a[i]);
       free(a);
       pll_errno = PLL_ERROR_MEM_ALLOC;
       snprintf(pll_errmsg, 200, "Unable to allocate enough memory.");
       return PLL_FAILURE;
     }
-    mytred2(a, states, d, e);
-    mytqli(d, e, states, a);
 
-    /* store eigen vectors */
-    for (i = 0; i < states; ++i)
-      memcpy(eigenvecs + i*states_padded, a[i], states*sizeof(double));
+    /* Here we use a technical trick to reduce rate matrix if some states
+     * have (near) zero frequencies. Code adapted from IQTree, see:
+     * https://github.com/Cibiv/IQ-TREE/commit/f222d317af46cf6abf8bcdb70d4db22475e9a7d2
+     */
+    new_states = eliminate_zero_states(a, freqs, states, new_freqs);
 
-    /* store eigen values */
-    memcpy(eigenvals, d, states*sizeof(double));
+    mytred2(a, new_states, d, e);
+    mytqli(d, e, new_states, a);
 
-    /* store inverse eigen vectors */
-    for (k = 0, i = 0; i < states; ++i)
-    {
-      for (j = i; j < states_padded*states; j += states_padded)
-        inv_eigenvecs[k++] = eigenvecs[j];
+    for (i = 0, inew = 0; i < states; i++)
+      eigenvals[i] = (freqs[i] > PLL_EIGEN_MINFREQ) ? d[inew++] : 0;
 
-      /* account for padding */
-      k += states_padded - states;
+    assert(inew == new_states);
+
+    /* pre-compute square roots of frequencies */
+    for (i = 0; i < new_states; i++)
+      new_freqs[i] = sqrt(new_freqs[i]);
+
+    if (new_states < states) {
+      /* initialize eigenvecs and inv_eigenvecs with diagonal matrix */
+      memset(eigenvecs, 0, states_padded * states * sizeof(double));
+      memset(inv_eigenvecs, 0, states_padded * states * sizeof(double));
+
+      for (i = 0; i < states; i++) {
+        eigenvecs[i * states_padded + i] = 1.;
+        inv_eigenvecs[i * states_padded + i] = 1.;
+      }
+
+      for (i = 0, inew = 0; i < states; i++) {
+        if (freqs[i] > PLL_EIGEN_MINFREQ) {
+          for (j = 0, jnew = 0; j < states; j++) {
+            if (freqs[j] > PLL_EIGEN_MINFREQ) {
+              /* multiply the eigen vectors from the right with sqrt(pi) */
+              eigenvecs[i * states_padded + j] =
+                  a[inew][jnew] * new_freqs[jnew];
+              /* multiply the inverse eigen vectors from the left with
+               * sqrt(pi)^-1 */
+              inv_eigenvecs[i * states_padded + j] =
+                  a[jnew][inew] / new_freqs[inew];
+              jnew++;
+            }
+          }
+          inew++;
+        }
+      }
+    } else {
+      for (i = 0; i < states; i++) {
+        for (j = 0; j < states; j++) {
+          /* multiply the eigen vectors from the right with sqrt(pi) */
+          eigenvecs[i * states_padded + j] = a[i][j] * new_freqs[j];
+          /* multiply the inverse eigen vectors from the left with sqrt(pi)^-1
+           */
+          inv_eigenvecs[i * states_padded + j] = a[j][i] / new_freqs[i];
+        }
+      }
     }
-
-    assert(k == states_padded*states);
   }
-
-  /* multiply the inverse eigen vectors from the left with sqrt(pi)^-1 */
-  for (i = 0; i < states; ++i)
-    for (j = 0; j < states; ++j)
-      inv_eigenvecs[i*states_padded+ j] /= sqrt(freqs[i]);
-
-  /* multiply the eigen vectors from the right with sqrt(pi) */
-  for (i = 0; i < states; ++i)
-    for (j = 0; j < states; ++j)
-      eigenvecs[i*states_padded+j] *= sqrt(freqs[j]);
 
   partition->eigen_decomp_valid[params_index] = 1;
 
-  if(d)
-  {
+  if (d) {
     free(d);
   }
-  if(e)
-  {
+  if (e) {
     free(e);
+  }
+  if (new_freqs) {
+    free(new_freqs);
   }
   for (i = 0; i < states; ++i)
     free(a[i]);
@@ -645,7 +709,7 @@ PLL_EXPORT int pll_update_invariant_sites_proportion(pll_partition_t * partition
     pll_errno = PLL_ERROR_INVAR_PARAMINDEX;
     snprintf(pll_errmsg,
              200,
-             "Invalid params index (%d)", params_index);
+             "Invalid params index (%u)", params_index);
     return PLL_FAILURE;
   }
 
@@ -696,7 +760,7 @@ PLL_EXPORT unsigned int pll_count_invariant_sites(pll_partition_t * partition,
     {
       if (invariant[i] > -1)
       {
-        cur_state = invariant[i];
+        cur_state = (pll_state_t) invariant[i];
         /* since the invariant sites array is generated in the library,
            it should not contain invalid values */
         assert (cur_state < states);
