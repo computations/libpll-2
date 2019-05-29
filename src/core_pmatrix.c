@@ -113,15 +113,6 @@ PLL_EXPORT int pll_core_update_pmatrix_nonrev(double ** pmatrix,
             pmat[i * states_padded + j] += tempd[i * states + k] *
               cur_inv_evecs[k * states + j] - tempd_imag[i * states + k] *
               cur_inv_evecs_imag[k * states + j];
-
-            /*
-             * The imaginary portion of the pmatrix should be zero here. If its
-             * not, something has gone seriously wrong. So lets calculated it
-             * and check if the debug flag is set.
-             */
-            assert(fabs(tempd[i * states + k] * cur_inv_evecs_imag[k * states +
-                  j] + tempd_imag[i * states + k] * cur_inv_evecs[k * states +
-                  j]) < PLL_MISC_EPSILON);
           }
         }
       }
