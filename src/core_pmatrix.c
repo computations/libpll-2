@@ -68,6 +68,16 @@ PLL_EXPORT int pll_core_update_pmatrix_nonrev(double ** pmatrix,
       cur_inv_evecs_imag = inv_eigenvecs_imag[params_indices[rate_cat]];
       cur_pinv = prop_invar[params_indices[rate_cat]];
 
+      if (branch_lengths[branch_index] == 0.0){
+        for (unsigned int i = 0; i < states; ++i) {
+          for (unsigned int j = 0; j < states; ++j) {
+            if (i == j) pmat[i*states_padded + j] = 1.0;
+            else pmat[i*states_padded + j] = 0.0;
+          }
+        }
+        continue;
+      }
+
       /*
        * compute the diagonal matrix using euler's formula:
        *
@@ -113,6 +123,10 @@ PLL_EXPORT int pll_core_update_pmatrix_nonrev(double ** pmatrix,
             pmat[i * states_padded + j] += tempd[i * states + k] *
               cur_inv_evecs[k * states + j] - tempd_imag[i * states + k] *
               cur_inv_evecs_imag[k * states + j];
+          }
+          if(pmat[i * states_padded + j] < 0.0){
+            assert(-pmat[i * states_padded +j] < PLL_MISC_EPSILON);
+            pmat[i * states_padded + j] = 0.0;
           }
         }
       }
