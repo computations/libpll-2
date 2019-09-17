@@ -132,6 +132,8 @@
 #define PLL_ATTRIB_NONREV          (1 << 11)
 #define PLL_ATTRIB_MASK            ((1 << 12) - 1)
 
+#define PLL_NONREV_EIGEN_FALLBACK (1 << 1)
+
 /* topological rearrangements */
 
 #define PLL_UTREE_MOVE_SPR                  1
@@ -2379,23 +2381,43 @@ PLL_EXPORT int pll_core_update_pmatrix(double ** pmatrix,
                                        double * const * inv_eigenvecs,
                                        unsigned int count,
                                        unsigned int attrib);
-PLL_EXPORT int pll_core_update_pmatrix_nonrev(double ** pmatrix,
-                                              unsigned int states,
-                                              unsigned int states_padded,
-                                              unsigned int rate_cats,
-                                              const double * rates,
-                                              const double * branch_lengths,
-                                              const unsigned int * matrix_indices,
+
+PLL_EXPORT int pll_core_update_pmatrix_nonrev(pll_partition_t * partition,
                                               const unsigned int * params_indices,
-                                              const double * prop_invar,
-                                              double * const * eigenvals,
-                                              double * const * eigenvals_imag,
-                                              double * const * eigenvecs,
-                                              double * const * eigenvecs_imag,
-                                              double * const * inv_eigenvecs,
-                                              double * const * inv_eigenvecs_imag,
-                                              unsigned int count,
-                                              unsigned int attributes);
+                                              const unsigned int * matrix_indices,
+                                              const double * branch_lengths,
+                                              unsigned int count);
+
+PLL_EXPORT int pll_core_update_pmatrix_nonrev_diag(double ** pmatrix,
+                                                   unsigned int states,
+                                                   unsigned int states_padded,
+                                                   unsigned int rate_cats,
+                                                   const double * rates,
+                                                   const double * branch_lengths,
+                                                   const unsigned int * matrix_indices,
+                                                   const unsigned int * params_indices,
+                                                   const double * prop_invar,
+                                                   double * const * eigenvals,
+                                                   double * const * eigenvals_imag,
+                                                   double * const * eigenvecs,
+                                                   double * const * eigenvecs_imag,
+                                                   double * const * inv_eigenvecs,
+                                                   double * const * inv_eigenvecs_imag,
+                                                   unsigned int count,
+                                                   unsigned int attributes);
+
+PLL_EXPORT int pll_core_update_pmatrix_nonrev_nondiag(double** pmatrix,
+                                                      unsigned int states,
+                                                      unsigned int states_padded,
+                                                      unsigned int rate_cats,
+                                                      const double* rates,
+                                                      const double* branch_lengths,
+                                                      const unsigned int * matrix_indices,
+                                                      const unsigned int * params_indices,
+                                                      const double * prop_invar,
+                                                      double * const * rate_matrices,
+                                                      unsigned int count,
+                                                      unsigned int attrib);
 
 /* functions in core_pmatrix_avx2.c */
 

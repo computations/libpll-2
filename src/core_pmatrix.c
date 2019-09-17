@@ -20,8 +20,10 @@
 */
 
 #include "pll.h"
+#include <gsl/gsl_complex.h>
+#include <gsl/gsl_linalg.h>
 
-PLL_EXPORT int pll_core_update_pmatrix_nonrev(double ** pmatrix,
+PLL_EXPORT int pll_core_update_pmatrix_nonrev_diag(double ** pmatrix,
                                               unsigned int states,
                                               unsigned int states_padded,
                                               unsigned int rate_cats,
@@ -121,8 +123,8 @@ PLL_EXPORT int pll_core_update_pmatrix_nonrev(double ** pmatrix,
           pmat[i*states_padded+j] = 0.0;
           for (unsigned int k = 0; k < states; ++k) {
             pmat[i * states_padded + j] += tempd[i * states + k] *
-              cur_inv_evecs[k * states + j] - tempd_imag[i * states + k] *
-              cur_inv_evecs_imag[k * states + j];
+              cur_inv_evecs[k * states_padded + j] - tempd_imag[i * states + k] *
+              cur_inv_evecs_imag[k * states_padded + j];
           }
           if(pmat[i * states_padded + j] < 0.0){
             assert(-pmat[i * states_padded +j] < PLL_MISC_EPSILON);
@@ -136,6 +138,123 @@ PLL_EXPORT int pll_core_update_pmatrix_nonrev(double ** pmatrix,
   free(expd_imag);
   free(tempd);
   free(tempd_imag);
+  return PLL_SUCCESS;
+}
+
+PLL_EXPORT int pll_core_update_pmatrix_nonrev_nondiag(double** pmatrix,
+                                                      unsigned int states,
+                                                      unsigned int states_padded,
+                                                      unsigned int rate_cats,
+                                                      const double* rates,
+                                                      const double* branch_lengths,
+                                                      const unsigned int * matrix_indices,
+                                                      const unsigned int * params_indices,
+                                                      const double * prop_invar,
+                                                      double * const * rate_matrices,
+                                                      unsigned int count,
+                                                      unsigned int attrib)
+{
+  gsl_matrix* tmp_rm = gsl_matrix_alloc(states, states);
+  gsl_matrix* tmp_pmatrix = gsl_matrix_alloc(states, states);
+
+  for (unsigned int branch_index = 0; branch_index < count; ++branch_index) {
+    for (unsigned int rate_cat = 0; rate_cat < rate_cats; ++rate_cat) {
+      double* pmat = pmatrix[matrix_indices[branch_index]] +
+             rate_cat * states * states_padded;
+      double const * cur_rate_matrix = rate_matrices[params_indices[rate_cat]];
+      double cur_pinv = prop_invar[params_indices[rate_cat]];
+
+      if (cur_pinv > 0) {
+        unsigned int k = 0;
+        for (unsigned int i = 0; i < states; ++i) {
+          double row_sum = 0.0;
+          for (unsigned int j = 0; j < states; ++j) {
+            if (i == j) continue;
+            double entry = rates[rate_cat] * branch_lengths[branch_index] *
+                               cur_rate_matrix[k++] /
+                               (1.0 - cur_pinv);
+            gsl_matrix_set(tmp_rm, i, j,entry);
+            row_sum += entry;
+          }
+          gsl_matrix_set(tmp_rm, i, i, -row_sum);
+        }
+      } else {
+        unsigned int k = 0;
+        for (unsigned int i = 0; i < states; ++i) {
+          double row_sum = 0.0;
+          for (unsigned int j = 0; j < states; ++j) {
+            if (i == j) continue;
+            double entry = rates[rate_cat] * branch_lengths[branch_index] *
+                               cur_rate_matrix[k++] /
+                               (1.0 - cur_pinv);
+            gsl_matrix_set(tmp_rm, i, j,entry);
+            row_sum += entry;
+          }
+          gsl_matrix_set(tmp_rm, i, i, -row_sum);
+        }
+      }
+
+      gsl_linalg_exponential_ss(tmp_rm, tmp_pmatrix, GSL_MODE_DEFAULT);
+
+      for (unsigned int i = 0; i < states; ++i) {
+        for (unsigned int j = 0; j < states; ++j) {
+          pmat[i * states_padded + j] = gsl_matrix_get(tmp_pmatrix, i, j);
+          assert(pmat[i*states_padded + j] <= 1.0);
+        }
+      }
+    }
+  }
+  gsl_matrix_free(tmp_rm);
+  gsl_matrix_free(tmp_pmatrix);
+  return PLL_SUCCESS;
+}
+
+PLL_EXPORT int pll_core_update_pmatrix_nonrev(pll_partition_t * partition,
+                                              const unsigned int * params_indices,
+                                              const unsigned int * matrix_indices,
+                                              const double * branch_lengths,
+                                              unsigned int count){
+  int return_no;
+  for(unsigned int i=0; i < count; ++i){
+    if(partition->eigen_decomp_valid[i] & PLL_NONREV_EIGEN_FALLBACK){
+      return_no = pll_core_update_pmatrix_nonrev_nondiag(partition->pmatrix,
+                                             partition->states,
+                                             partition->states_padded,
+                                             partition->rate_cats,
+                                             partition->rates,
+                                             branch_lengths,
+                                             matrix_indices,
+                                             params_indices,
+                                             partition->prop_invar,
+                                             partition->subst_params,
+                                             count,
+                                             partition->attributes);
+      if (return_no == PLL_FAILURE){
+        return PLL_FAILURE;
+      }
+    } else {
+      return_no = pll_core_update_pmatrix_nonrev_diag(partition->pmatrix,
+                                                      partition->states,
+                                                      partition->states_padded,
+                                                      partition->rate_cats,
+                                                      partition->rates,
+                                                      branch_lengths,
+                                                      matrix_indices,
+                                                      params_indices,
+                                                      partition->prop_invar,
+                                                      partition->eigenvals,
+                                                      partition->eigenvals_imag,
+                                                      partition->eigenvecs,
+                                                      partition->eigenvecs_imag,
+                                                      partition->inv_eigenvecs,
+                                                      partition->inv_eigenvecs_imag,
+                                                      count,
+                                                      partition->attributes);
+      if (return_no == PLL_FAILURE){
+        return PLL_FAILURE;
+      }
+    }
+  }
   return PLL_SUCCESS;
 }
 

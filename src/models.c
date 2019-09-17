@@ -21,6 +21,8 @@
 
 #include "pll.h"
 #include <gsl/gsl_eigen.h>
+#include <gsl/gsl_complex.h>
+#include <gsl/gsl_complex_math.h>
 #include <gsl/gsl_linalg.h>
 
 #define PLL_MEMORY_ALLOC_CHECK(ptr) {\
@@ -216,7 +218,7 @@ int pll_nonsym_eigen(double** A,
 
     ws = gsl_eigen_nonsymmv_alloc(n);
     PLL_MEMORY_ALLOC_CHECK_MSG(ws, "Could not allocate memory for the GSL workspace");
-    M = gsl_matrix_alloc(n,n);
+    M = gsl_matrix_calloc(n,n);
     PLL_MEMORY_ALLOC_CHECK_MSG(M, "Could not allocate memory for a matrix");
 
     for (i = 0; i < n; ++i) {
@@ -225,17 +227,17 @@ int pll_nonsym_eigen(double** A,
         }
     }
 
-    eigenvectors = gsl_matrix_complex_alloc(n,n);
+    eigenvectors = gsl_matrix_complex_calloc(n,n);
     PLL_MEMORY_ALLOC_CHECK(eigenvectors);
-    eigenvalues = gsl_vector_complex_alloc(n);
+    eigenvalues = gsl_vector_complex_calloc(n);
     PLL_MEMORY_ALLOC_CHECK(eigenvalues);
 
     gsl_eigen_nonsymmv(M, eigenvalues, eigenvectors, ws);
 
     signum = 1;
-    inv_eigenvectors = gsl_matrix_complex_alloc(n,n);
+    inv_eigenvectors = gsl_matrix_complex_calloc(n,n);
     PLL_MEMORY_ALLOC_CHECK(inv_eigenvectors);
-    tmp_eigenvectors = gsl_matrix_complex_alloc(n,n);
+    tmp_eigenvectors = gsl_matrix_complex_calloc(n,n);
     gsl_matrix_complex_memcpy(tmp_eigenvectors, eigenvectors);
     PLL_MEMORY_ALLOC_CHECK(tmp_eigenvectors);
     lu_perm = gsl_permutation_alloc(n);
@@ -267,6 +269,15 @@ int pll_nonsym_eigen(double** A,
             inv_eigenvectors_imag[j*n_padded + i] =
                 GSL_IMAG(gsl_matrix_complex_get(inv_eigenvectors,j,i));
         }
+    }
+
+    double det_real = 1.0;
+    double det_imag = 0.0;
+    for(i = 0; i < n; ++i){
+      double eval_real = eigenvalues_real[i];
+      double eval_imag = eigenvalues_imag[i];
+      det_real = eval_real * det_real - eval_imag * det_imag;
+      det_imag = eval_real * det_imag + eval_imag * det_real;
     }
 
     gsl_eigen_nonsymmv_free(ws);
@@ -357,7 +368,7 @@ static double ** create_ratematrix(double * params,
     /* construct a matrix equal to sqrt(pi) * Q sqrt(pi)^-1 in order to ensure
        it is symmetric */
     /*
-     * The above comment is incorrect. This computes 
+     * The above comment is incorrect. This computes
      *      Q .* sqrt(pi*pi'),
      * I.E. the elementwise product of Q with the outer product of pi with
      * itself. This creates a symmetric matrix, if Q was symmetric.
@@ -429,6 +440,67 @@ static unsigned int eliminate_zero_states(double **mat, double *forg,
   return new_states;
 }
 
+int check_eigendecomp(double* eigenvecs,
+                      double* eigenvecs_imag,
+                      double* inv_eigenvecs,
+                      double* inv_eigenvecs_imag,
+                      unsigned int states,
+                      unsigned int states_padded)
+{
+  gsl_matrix_complex *A = gsl_matrix_complex_calloc(states, states);
+  gsl_matrix_complex *B = gsl_matrix_complex_calloc(states, states);
+  for (unsigned int i = 0; i < states; ++i) {
+    for (unsigned int j = 0; j < states; ++j) {
+      gsl_matrix_complex_set(
+          A, i, j,
+          gsl_complex_rect(eigenvecs[i * states_padded + j],
+                           eigenvecs_imag[i * states_padded + j]));
+      gsl_matrix_complex_set(
+          B, i, j,
+          gsl_complex_rect(inv_eigenvecs[i * states_padded + j],
+                           inv_eigenvecs_imag[i * states_padded + j]));
+    }
+  }
+
+  gsl_matrix_complex *check = gsl_matrix_complex_calloc(states, states);
+  gsl_complex alpha;
+  gsl_complex beta;
+  alpha.dat[0] = 1.0;
+  alpha.dat[1] = 0.0;
+  beta.dat[0] = 0.0;
+  beta.dat[1] = 0.0;
+  gsl_blas_zgemm(CblasNoTrans, CblasNoTrans, alpha, A, B, beta, check);
+
+  for (unsigned int i = 0; i < states; ++i) {
+    for (unsigned int j = 0; j < states; ++j) {
+      double real = GSL_REAL(gsl_matrix_complex_get(check, i, j));
+      double imag = GSL_IMAG(gsl_matrix_complex_get(check, i, j));
+      if (i == j) {
+        if ((fabs(real - 1.0) < PLL_MISC_EPSILON) ||
+            (fabs(imag) < PLL_MISC_EPSILON)) {
+          gsl_matrix_complex_free(A);
+          gsl_matrix_complex_free(B);
+          gsl_matrix_complex_free(check);
+          return PLL_FAILURE;
+        }
+      } else {
+        if ((fabs(real) < PLL_MISC_EPSILON) ||
+            (fabs(imag) < PLL_MISC_EPSILON)) {
+          gsl_matrix_complex_free(A);
+          gsl_matrix_complex_free(B);
+          gsl_matrix_complex_free(check);
+          return PLL_FAILURE;
+        }
+      }
+    }
+  }
+
+  gsl_matrix_complex_free(A);
+  gsl_matrix_complex_free(B);
+  gsl_matrix_complex_free(check);
+  return PLL_SUCCESS;
+}
+
 PLL_EXPORT int pll_update_eigen(pll_partition_t * partition,
                                 unsigned int params_index)
 {
@@ -471,6 +543,11 @@ PLL_EXPORT int pll_update_eigen(pll_partition_t * partition,
                                  inv_eigenvecs, inv_eigenvecs_imag);
     if (result_no == PLL_FAILURE) {
       return PLL_FAILURE;
+    }
+    if (check_eigendecomp(eigenvals, eigenvecs_imag, inv_eigenvecs,
+          inv_eigenvecs_imag,partition->states, partition->states_padded) 
+        == PLL_FAILURE){
+      partition->eigen_decomp_valid[params_index] |= 0x1 | PLL_NONREV_EIGEN_FALLBACK;
     }
   } else {
     d = (double *)malloc(states * sizeof(double));
@@ -586,23 +663,12 @@ PLL_EXPORT int pll_update_prob_matrices(pll_partition_t * partition,
   }
 
   if (partition->attributes & PLL_ATTRIB_NONREV){
-    return pll_core_update_pmatrix_nonrev(partition->pmatrix,
-                                   partition->states,
-                                   partition->states_padded,
-                                   partition->rate_cats,
-                                   partition->rates,
-                                   branch_lengths,
-                                   matrix_indices,
-                                   params_indices,
-                                   partition->prop_invar,
-                                   partition->eigenvals,
-                                   partition->eigenvals_imag,
-                                   partition->eigenvecs,
-                                   partition->eigenvecs_imag,
-                                   partition->inv_eigenvecs,
-                                   partition->inv_eigenvecs_imag,
-                                   count,
-                                   partition->attributes);
+    return pll_core_update_pmatrix_nonrev(partition,
+                                          params_indices,
+                                          matrix_indices,
+                                          branch_lengths,
+                                          count);
+
   }
   else{
     return pll_core_update_pmatrix(partition->pmatrix,
@@ -905,7 +971,7 @@ PLL_EXPORT int pll_update_invariant_sites(pll_partition_t * partition)
     for (i = 0; i < tips; ++i)
     {
       const unsigned int * site_id = NULL;
-      if (partition->repeats && partition->repeats->pernode_ids[i]) 
+      if (partition->repeats && partition->repeats->pernode_ids[i])
       {
         site_id = partition->repeats->pernode_site_id[i];
       }
