@@ -544,8 +544,8 @@ PLL_EXPORT int pll_update_eigen(pll_partition_t * partition,
     if (result_no == PLL_FAILURE) {
       return PLL_FAILURE;
     }
-    if (check_eigendecomp(eigenvals, eigenvecs_imag, inv_eigenvecs,
-          inv_eigenvecs_imag,partition->states, partition->states_padded) 
+    if (check_eigendecomp(eigenvecs, eigenvecs_imag, inv_eigenvecs,
+          inv_eigenvecs_imag,partition->states, partition->states_padded)
         == PLL_FAILURE){
       partition->eigen_decomp_valid[params_index] |= 0x1 | PLL_NONREV_EIGEN_FALLBACK;
     }
