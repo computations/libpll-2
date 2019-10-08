@@ -440,64 +440,23 @@ static unsigned int eliminate_zero_states(double **mat, double *forg,
   return new_states;
 }
 
-int check_eigendecomp(double* eigenvecs,
-                      double* eigenvecs_imag,
-                      double* inv_eigenvecs,
-                      double* inv_eigenvecs_imag,
-                      unsigned int states,
-                      unsigned int states_padded)
+int check_eigendecomp(double* eigenvals,
+                      double* eigenvals_imag,
+                      unsigned int states)
 {
-  gsl_matrix_complex *A = gsl_matrix_complex_calloc(states, states);
-  gsl_matrix_complex *B = gsl_matrix_complex_calloc(states, states);
-  for (unsigned int i = 0; i < states; ++i) {
-    for (unsigned int j = 0; j < states; ++j) {
-      gsl_matrix_complex_set(
-          A, i, j,
-          gsl_complex_rect(eigenvecs[i * states_padded + j],
-                           eigenvecs_imag[i * states_padded + j]));
-      gsl_matrix_complex_set(
-          B, i, j,
-          gsl_complex_rect(inv_eigenvecs[i * states_padded + j],
-                           inv_eigenvecs_imag[i * states_padded + j]));
-    }
+  return PLL_FAILURE;
+  double eigen_max = eigenvals[0] * eigenvals[0] + 
+    eigenvals_imag[0] * eigenvals_imag[0];
+  double eigen_min = eigenvals[0] * eigenvals[0] + 
+    eigenvals_imag[0] * eigenvals_imag[0];
+
+  for(unsigned int i=0; i < states; ++i){
+    double eigen= eigenvals[i] * eigenvals[i] + 
+      eigenvals_imag[i] * eigenvals_imag[i];
+    if(eigen > eigen_max) eigen_max = eigen;
+    if(eigen < eigen_min) eigen_min = eigen;
   }
-
-  gsl_matrix_complex *check = gsl_matrix_complex_calloc(states, states);
-  gsl_complex alpha;
-  gsl_complex beta;
-  alpha.dat[0] = 1.0;
-  alpha.dat[1] = 0.0;
-  beta.dat[0] = 0.0;
-  beta.dat[1] = 0.0;
-  gsl_blas_zgemm(CblasNoTrans, CblasNoTrans, alpha, A, B, beta, check);
-
-  for (unsigned int i = 0; i < states; ++i) {
-    for (unsigned int j = 0; j < states; ++j) {
-      double real = GSL_REAL(gsl_matrix_complex_get(check, i, j));
-      double imag = GSL_IMAG(gsl_matrix_complex_get(check, i, j));
-      if (i == j) {
-        if ((fabs(real - 1.0) < PLL_MISC_EPSILON) ||
-            (fabs(imag) < PLL_MISC_EPSILON)) {
-          gsl_matrix_complex_free(A);
-          gsl_matrix_complex_free(B);
-          gsl_matrix_complex_free(check);
-          return PLL_FAILURE;
-        }
-      } else {
-        if ((fabs(real) < PLL_MISC_EPSILON) ||
-            (fabs(imag) < PLL_MISC_EPSILON)) {
-          gsl_matrix_complex_free(A);
-          gsl_matrix_complex_free(B);
-          gsl_matrix_complex_free(check);
-          return PLL_FAILURE;
-        }
-      }
-    }
-  }
-
-  gsl_matrix_complex_free(A);
-  gsl_matrix_complex_free(B);
-  gsl_matrix_complex_free(check);
+  if(eigen_max / eigen_min > 1e4) return PLL_FAILURE;
   return PLL_SUCCESS;
 }
 
@@ -535,6 +494,7 @@ PLL_EXPORT int pll_update_eigen(pll_partition_t * partition,
   }
 
   if (partition->attributes & PLL_ATTRIB_NONREV) {
+    /*
     eigenvecs_imag = partition->eigenvecs_imag[params_index];
     inv_eigenvecs_imag = partition->inv_eigenvecs_imag[params_index];
     eigenvals_imag = partition->eigenvals_imag[params_index];
@@ -544,11 +504,12 @@ PLL_EXPORT int pll_update_eigen(pll_partition_t * partition,
     if (result_no == PLL_FAILURE) {
       return PLL_FAILURE;
     }
-    if (check_eigendecomp(eigenvals, eigenvecs_imag, inv_eigenvecs,
-          inv_eigenvecs_imag,partition->states, partition->states_padded) 
+    if (check_eigendecomp(eigenvals, eigenvals_imag, states) 
         == PLL_FAILURE){
       partition->eigen_decomp_valid[params_index] |= 0x1 | PLL_NONREV_EIGEN_FALLBACK;
     }
+   */
+    partition->eigen_decomp_valid[params_index] |= 0x1 | PLL_NONREV_EIGEN_FALLBACK;
   } else {
     d = (double *)malloc(states * sizeof(double));
     e = (double *)malloc(states * sizeof(double));
@@ -731,7 +692,7 @@ PLL_EXPORT void pll_set_subst_params(pll_partition_t * partition,
   unsigned int count = 0;
   if (partition->attributes & PLL_ATTRIB_NONREV)
   {
-    count = partition->states * (partition->states-1);
+    count = partition->states * (partition->states - 1);
   }
   else
   {
