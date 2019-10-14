@@ -134,6 +134,10 @@
 
 #define PLL_NONREV_EIGEN_FALLBACK (1 << 1)
 
+#define PLL_NONREV_EIGEN_DET_THRESHOLD 1e-10
+#define PLL_NONREV_EIGEN_SUCCESS 0
+#define PLL_NONREV_EIGEN_NONINVERTABLE (1<<1)
+
 /* topological rearrangements */
 
 #define PLL_UTREE_MOVE_SPR                  1

@@ -205,7 +205,8 @@ int pll_nonsym_eigen(double** A,
         double* eigenvectors_real,
         double* eigenvectors_imag,
         double* inv_eigenvectors_real,
-        double* inv_eigenvectors_imag)
+        double* inv_eigenvectors_imag,
+        int* status)
 {
     int signum;
     size_t i, j;
@@ -243,6 +244,19 @@ int pll_nonsym_eigen(double** A,
     lu_perm = gsl_permutation_alloc(n);
     PLL_MEMORY_ALLOC_CHECK(lu_perm);
 
+    gsl_complex eigenvec_det = gsl_linalg_complex_LU_det(tmp_eigenvectors, signum);
+    if(gsl_complex_abs(eigenvec_det) < PLL_NONREV_EIGEN_DET_THRESHOLD){
+      gsl_eigen_nonsymmv_free(ws);
+      gsl_matrix_free(M);
+      gsl_matrix_complex_free(eigenvectors);
+      gsl_matrix_complex_free(inv_eigenvectors);
+      gsl_matrix_complex_free(tmp_eigenvectors);
+      gsl_vector_complex_free(eigenvalues);
+      gsl_permutation_free(lu_perm);
+      *status = PLL_NONREV_EIGEN_NONINVERTABLE;
+      return PLL_SUCCESS;
+    }
+
     gsl_linalg_complex_LU_decomp(tmp_eigenvectors, lu_perm, &signum);
     gsl_linalg_complex_LU_invert(tmp_eigenvectors, lu_perm, inv_eigenvectors);
 
@@ -271,15 +285,6 @@ int pll_nonsym_eigen(double** A,
         }
     }
 
-    double det_real = 1.0;
-    double det_imag = 0.0;
-    for(i = 0; i < n; ++i){
-      double eval_real = eigenvalues_real[i];
-      double eval_imag = eigenvalues_imag[i];
-      det_real = eval_real * det_real - eval_imag * det_imag;
-      det_imag = eval_real * det_imag + eval_imag * det_real;
-    }
-
     gsl_eigen_nonsymmv_free(ws);
     gsl_matrix_free(M);
     gsl_matrix_complex_free(eigenvectors);
@@ -287,6 +292,7 @@ int pll_nonsym_eigen(double** A,
     gsl_matrix_complex_free(tmp_eigenvectors);
     gsl_vector_complex_free(eigenvalues);
     gsl_permutation_free(lu_perm);
+    *status = PLL_NONREV_EIGEN_SUCCESS;
     return PLL_SUCCESS;
 }
 
@@ -440,26 +446,6 @@ static unsigned int eliminate_zero_states(double **mat, double *forg,
   return new_states;
 }
 
-int check_eigendecomp(double* eigenvals,
-                      double* eigenvals_imag,
-                      unsigned int states)
-{
-  return PLL_FAILURE;
-  double eigen_max = eigenvals[0] * eigenvals[0] + 
-    eigenvals_imag[0] * eigenvals_imag[0];
-  double eigen_min = eigenvals[0] * eigenvals[0] + 
-    eigenvals_imag[0] * eigenvals_imag[0];
-
-  for(unsigned int i=0; i < states; ++i){
-    double eigen= eigenvals[i] * eigenvals[i] + 
-      eigenvals_imag[i] * eigenvals_imag[i];
-    if(eigen > eigen_max) eigen_max = eigen;
-    if(eigen < eigen_min) eigen_min = eigen;
-  }
-  if(eigen_max / eigen_min > 1e4) return PLL_FAILURE;
-  return PLL_SUCCESS;
-}
-
 PLL_EXPORT int pll_update_eigen(pll_partition_t * partition,
                                 unsigned int params_index)
 {
@@ -494,22 +480,19 @@ PLL_EXPORT int pll_update_eigen(pll_partition_t * partition,
   }
 
   if (partition->attributes & PLL_ATTRIB_NONREV) {
-    /*
+    int status = 0;
     eigenvecs_imag = partition->eigenvecs_imag[params_index];
     inv_eigenvecs_imag = partition->inv_eigenvecs_imag[params_index];
     eigenvals_imag = partition->eigenvals_imag[params_index];
     result_no = pll_nonsym_eigen(a, states, states_padded, eigenvals,
                                  eigenvals_imag, eigenvecs, eigenvecs_imag,
-                                 inv_eigenvecs, inv_eigenvecs_imag);
+                                 inv_eigenvecs, inv_eigenvecs_imag, &status);
     if (result_no == PLL_FAILURE) {
       return PLL_FAILURE;
     }
-    if (check_eigendecomp(eigenvals, eigenvals_imag, states) 
-        == PLL_FAILURE){
+    if (status == PLL_NONREV_EIGEN_NONINVERTABLE){
       partition->eigen_decomp_valid[params_index] |= 0x1 | PLL_NONREV_EIGEN_FALLBACK;
     }
-   */
-    partition->eigen_decomp_valid[params_index] |= 0x1 | PLL_NONREV_EIGEN_FALLBACK;
   } else {
     d = (double *)malloc(states * sizeof(double));
     e = (double *)malloc(states * sizeof(double));
