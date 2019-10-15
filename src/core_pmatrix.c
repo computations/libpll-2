@@ -20,8 +20,9 @@
 */
 
 #include "pll.h"
-#include <gsl/gsl_complex.h>
 #include <gsl/gsl_linalg.h>
+#include <gsl/gsl_complex.h>
+#include <gsl/gsl_complex_math.h>
 
 PLL_EXPORT int pll_core_update_pmatrix_nonrev_diag(double ** pmatrix,
                                               unsigned int states,
@@ -127,7 +128,7 @@ PLL_EXPORT int pll_core_update_pmatrix_nonrev_diag(double ** pmatrix,
               cur_inv_evecs_imag[k * states_padded + j];
           }
           if(pmat[i * states_padded + j] < 0.0){
-            assert(-pmat[i * states_padded +j] < PLL_MISC_EPSILON);
+            assert(-pmat[i * states_padded +j] < 1e-6);
             pmat[i * states_padded + j] = 0.0;
           }
         }

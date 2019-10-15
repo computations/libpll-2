@@ -243,6 +243,8 @@ int pll_nonsym_eigen(double** A,
     lu_perm = gsl_permutation_alloc(n);
     PLL_MEMORY_ALLOC_CHECK(lu_perm);
 
+    gsl_linalg_complex_LU_decomp(tmp_eigenvectors, lu_perm, &signum);
+
     gsl_complex eigenvec_det = gsl_linalg_complex_LU_det(tmp_eigenvectors, signum);
     if(gsl_complex_abs(eigenvec_det) < PLL_NONREV_EIGEN_DET_THRESHOLD){
       gsl_eigen_nonsymmv_free(ws);
@@ -256,7 +258,6 @@ int pll_nonsym_eigen(double** A,
       return PLL_SUCCESS;
     }
 
-    gsl_linalg_complex_LU_decomp(tmp_eigenvectors, lu_perm, &signum);
     gsl_linalg_complex_LU_invert(tmp_eigenvectors, lu_perm, inv_eigenvectors);
 
     /*
