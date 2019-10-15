@@ -215,7 +215,7 @@ PLL_EXPORT int pll_core_update_pmatrix_nonrev(pll_partition_t * partition,
                                               const double * branch_lengths,
                                               unsigned int count){
   int return_no;
-  for(unsigned int i=0; i < count; ++i){
+  for(unsigned int i=0; i < partition->rate_matrices; ++i){
     if(partition->eigen_decomp_valid[i] & PLL_NONREV_EIGEN_FALLBACK){
       return_no = pll_core_update_pmatrix_nonrev_nondiag(partition->pmatrix,
                                              partition->states,

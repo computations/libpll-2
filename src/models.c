@@ -216,7 +216,6 @@ int pll_nonsym_eigen(double** A,
     gsl_matrix_complex *eigenvectors, *inv_eigenvectors, *tmp_eigenvectors;
     gsl_permutation *lu_perm;
 
-
     ws = gsl_eigen_nonsymmv_alloc(n);
     PLL_MEMORY_ALLOC_CHECK_MSG(ws, "Could not allocate memory for the GSL workspace");
     M = gsl_matrix_calloc(n,n);
@@ -570,7 +569,7 @@ PLL_EXPORT int pll_update_eigen(pll_partition_t * partition,
     }
   }
 
-  partition->eigen_decomp_valid[params_index] = 1;
+  partition->eigen_decomp_valid[params_index] |= 1;
 
   if (d) {
     free(d);
