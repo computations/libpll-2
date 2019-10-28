@@ -491,7 +491,7 @@ PLL_EXPORT int pll_update_eigen(pll_partition_t * partition,
       return PLL_FAILURE;
     }
     if (status == PLL_NONREV_EIGEN_NONINVERTABLE){
-      partition->eigen_decomp_valid[params_index] |= 0x1 | PLL_NONREV_EIGEN_FALLBACK;
+      partition->eigen_diagonalizable[params_index] = 0;
     }
   } else {
     d = (double *)malloc(states * sizeof(double));
@@ -568,9 +568,10 @@ PLL_EXPORT int pll_update_eigen(pll_partition_t * partition,
         }
       }
     }
+    partition->eigen_diagonalizable[params_index] = 1;
   }
 
-  partition->eigen_decomp_valid[params_index] |= 1;
+  partition->eigen_decomp_valid[params_index] = 1;
 
   if (d) {
     free(d);
@@ -653,6 +654,7 @@ PLL_EXPORT void pll_set_frequencies(pll_partition_t * partition,
   }
 
   partition->eigen_decomp_valid[freqs_index] = 0;
+  partition->eigen_diagonalizable[freqs_index] = 0;
 }
 
 PLL_EXPORT void pll_set_category_rates(pll_partition_t * partition,
@@ -685,6 +687,7 @@ PLL_EXPORT void pll_set_subst_params(pll_partition_t * partition,
   memcpy(partition->subst_params[params_index],
          params, count*sizeof(double));
   partition->eigen_decomp_valid[params_index] = 0;
+  partition->eigen_diagonalizable[params_index] = 0;
 
   /* NOTE: For protein models PLL/RAxML do a rate scaling by 10.0/max_rate */
 }

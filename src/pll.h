@@ -132,8 +132,6 @@
 #define PLL_ATTRIB_NONREV          (1 << 11)
 #define PLL_ATTRIB_MASK            ((1 << 12) - 1)
 
-#define PLL_NONREV_EIGEN_FALLBACK (1 << 1)
-
 #define PLL_NONREV_EIGEN_DET_THRESHOLD 1e-10
 #define PLL_NONREV_EIGEN_SUCCESS 0
 #define PLL_NONREV_EIGEN_NONINVERTABLE (1<<1)
@@ -266,6 +264,7 @@ typedef struct pll_partition
   unsigned int * pattern_weights;
 
   int * eigen_decomp_valid;
+  int * eigen_diagonalizable;
   double ** eigenvecs;
   double ** inv_eigenvecs;
   double ** eigenvals;

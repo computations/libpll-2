@@ -37,6 +37,7 @@ static void dealloc_partition_data(pll_partition_t * partition)
   free(partition->rates);
   free(partition->rate_weights);
   free(partition->eigen_decomp_valid);
+  free(partition->eigen_diagonalizable);
   if (partition->prop_invar)
     free(partition->prop_invar);
   if (partition->invariant)
@@ -533,6 +534,7 @@ PLL_EXPORT pll_partition_t * pll_partition_create(unsigned int tips,
   partition->scale_buffer = NULL;
   partition->frequencies = NULL;
   partition->eigen_decomp_valid = 0;
+  partition->eigen_diagonalizable = 0;
 
   partition->ttlookup = NULL;
   partition->tipchars = NULL;
@@ -556,6 +558,14 @@ PLL_EXPORT pll_partition_t * pll_partition_create(unsigned int tips,
                                                 sizeof(int));
   if (!partition->eigen_decomp_valid)
   {
+    dealloc_partition_data(partition);
+    pll_errno = PLL_ERROR_MEM_ALLOC;
+    snprintf(pll_errmsg, 200, "Unable to allocate enough memory.");
+    return PLL_FAILURE;
+  }
+  partition->eigen_diagonalizable = (int* )calloc(partition->rate_matrices,
+      sizeof(int));
+  if(!partition->eigen_diagonalizable){
     dealloc_partition_data(partition);
     pll_errno = PLL_ERROR_MEM_ALLOC;
     snprintf(pll_errmsg, 200, "Unable to allocate enough memory.");
