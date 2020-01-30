@@ -59,9 +59,10 @@ PLL_EXPORT int pll_core_update_pmatrix_nonrev_diag(double ** pmatrix,
   expd_imag = (double*)malloc(states * sizeof(double));
   tempd = (double*)malloc(states * states * sizeof(double));
   tempd_imag = (double*)malloc(states * states * sizeof(double));
+  unsigned int branch_index, rate_cat, i, j, k;
 
-  for (unsigned int branch_index = 0; branch_index < count; ++branch_index) {
-    for (unsigned int rate_cat = 0; rate_cat < rate_cats; ++rate_cat) {
+  for ( branch_index = 0; branch_index < count; ++branch_index) {
+    for ( rate_cat = 0; rate_cat < rate_cats; ++rate_cat) {
       pmat = pmatrix[matrix_indices[branch_index]] + rate_cat*states*states_padded;
       cur_evals = eigenvals[params_indices[rate_cat]];
       cur_evals_imag = eigenvals_imag[params_indices[rate_cat]];
@@ -72,8 +73,8 @@ PLL_EXPORT int pll_core_update_pmatrix_nonrev_diag(double ** pmatrix,
       cur_pinv = prop_invar[params_indices[rate_cat]];
 
       if (branch_lengths[branch_index] == 0.0){
-        for (unsigned int i = 0; i < states; ++i) {
-          for (unsigned int j = 0; j < states; ++j) {
+        for ( i = 0; i < states; ++i) {
+          for ( j = 0; j < states; ++j) {
             if (i == j) pmat[i*states_padded + j] = 1.0;
             else pmat[i*states_padded + j] = 0.0;
           }
@@ -88,7 +89,7 @@ PLL_EXPORT int pll_core_update_pmatrix_nonrev_diag(double ** pmatrix,
        *
        */
       if (cur_pinv > 0){
-        for (unsigned int i = 0; i < states; ++i) {
+        for ( i = 0; i < states; ++i) {
           real = cur_evals[i] * rates[rate_cat] *
             branch_lengths[branch_index] / (1.0 - cur_pinv);
           imag = cur_evals_imag[i] * rates[rate_cat] *
@@ -99,7 +100,7 @@ PLL_EXPORT int pll_core_update_pmatrix_nonrev_diag(double ** pmatrix,
         }
       }
       else{
-        for (unsigned int i = 0; i < states; ++i) {
+        for ( i = 0; i < states; ++i) {
           real = cur_evals[i] * rates[rate_cat] * branch_lengths[branch_index];
           imag = cur_evals_imag[i] * rates[rate_cat] * branch_lengths[branch_index];
 
@@ -109,8 +110,8 @@ PLL_EXPORT int pll_core_update_pmatrix_nonrev_diag(double ** pmatrix,
       }
 
       /* compute T = E * D, where D is the diagonal matrix calculated above */
-      for (unsigned int i = 0; i < states; ++i) {
-        for (unsigned int j = 0; j < states; ++j) {
+      for ( i = 0; i < states; ++i) {
+        for ( j = 0; j < states; ++j) {
           real = cur_evecs[i * states + j];
           imag = cur_evecs_imag[i * states + j];
           tempd[i * states + j] = expd[j] * real - expd_imag[j] * imag;
@@ -119,10 +120,10 @@ PLL_EXPORT int pll_core_update_pmatrix_nonrev_diag(double ** pmatrix,
       }
 
       /* compute P = T * E^-1 */
-      for (unsigned int i = 0; i < states; ++i) {
-        for (unsigned int j = 0; j < states; ++j) {
+      for ( i = 0; i < states; ++i) {
+        for ( j = 0; j < states; ++j) {
           pmat[i*states_padded+j] = 0.0;
-          for (unsigned int k = 0; k < states; ++k) {
+          for ( k = 0; k < states; ++k) {
             pmat[i * states_padded + j] += tempd[i * states + k] *
               cur_inv_evecs[k * states_padded + j] - tempd_imag[i * states + k] *
               cur_inv_evecs_imag[k * states_padded + j];
@@ -155,23 +156,28 @@ PLL_EXPORT int pll_core_update_pmatrix_nonrev_nondiag(double** pmatrix,
                                                       unsigned int count,
                                                       unsigned int attrib)
 {
+  unsigned int branch_index, rate_cat, i, j, k;
+  double row_sum, entry, cur_pinv;
+  double* pmat;
+  const double * cur_rate_matrix;
   gsl_matrix* tmp_rm = gsl_matrix_alloc(states, states);
   gsl_matrix* tmp_pmatrix = gsl_matrix_alloc(states, states);
 
-  for (unsigned int branch_index = 0; branch_index < count; ++branch_index) {
-    for (unsigned int rate_cat = 0; rate_cat < rate_cats; ++rate_cat) {
-      double* pmat = pmatrix[matrix_indices[branch_index]] +
+
+  for ( branch_index = 0; branch_index < count; ++branch_index) {
+    for ( rate_cat = 0; rate_cat < rate_cats; ++rate_cat) {
+      pmat = pmatrix[matrix_indices[branch_index]] +
              rate_cat * states * states_padded;
-      double const * cur_rate_matrix = rate_matrices[params_indices[rate_cat]];
-      double cur_pinv = prop_invar[params_indices[rate_cat]];
+      cur_rate_matrix = rate_matrices[params_indices[rate_cat]];
+      cur_pinv = prop_invar[params_indices[rate_cat]];
 
       if (cur_pinv > 0) {
-        unsigned int k = 0;
-        for (unsigned int i = 0; i < states; ++i) {
-          double row_sum = 0.0;
-          for (unsigned int j = 0; j < states; ++j) {
+         k = 0;
+        for ( i = 0; i < states; ++i) {
+           row_sum = 0.0;
+          for ( j = 0; j < states; ++j) {
             if (i == j) continue;
-            double entry = rates[rate_cat] * branch_lengths[branch_index] *
+             entry = rates[rate_cat] * branch_lengths[branch_index] *
                                cur_rate_matrix[k++] /
                                (1.0 - cur_pinv);
             gsl_matrix_set(tmp_rm, i, j,entry);
@@ -180,12 +186,12 @@ PLL_EXPORT int pll_core_update_pmatrix_nonrev_nondiag(double** pmatrix,
           gsl_matrix_set(tmp_rm, i, i, -row_sum);
         }
       } else {
-        unsigned int k = 0;
-        for (unsigned int i = 0; i < states; ++i) {
-          double row_sum = 0.0;
-          for (unsigned int j = 0; j < states; ++j) {
+         k = 0;
+        for ( i = 0; i < states; ++i) {
+           row_sum = 0.0;
+          for ( j = 0; j < states; ++j) {
             if (i == j) continue;
-            double entry = rates[rate_cat] * branch_lengths[branch_index] *
+             entry = rates[rate_cat] * branch_lengths[branch_index] *
                                cur_rate_matrix[k++] /
                                (1.0 - cur_pinv);
             gsl_matrix_set(tmp_rm, i, j,entry);
@@ -197,8 +203,8 @@ PLL_EXPORT int pll_core_update_pmatrix_nonrev_nondiag(double** pmatrix,
 
       gsl_linalg_exponential_ss(tmp_rm, tmp_pmatrix, GSL_MODE_DEFAULT);
 
-      for (unsigned int i = 0; i < states; ++i) {
-        for (unsigned int j = 0; j < states; ++j) {
+      for ( i = 0; i < states; ++i) {
+        for ( j = 0; j < states; ++j) {
           pmat[i * states_padded + j] = gsl_matrix_get(tmp_pmatrix, i, j);
           assert(pmat[i*states_padded + j] <= 1.0);
         }

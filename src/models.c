@@ -306,8 +306,11 @@ static double ** create_ratematrix(double * params,
   unsigned int i,j,k,success;
 
   double ** qmatrix;
+  double * params_normalized;
+  double factor, row_sum;
 
   unsigned int params_count = 0;
+
   if (unsymm)
   {
     params_count = states * states - states;
@@ -317,7 +320,7 @@ static double ** create_ratematrix(double * params,
     params_count = (states * states-states) / 2;
   }
   /* normalize substitution parameters */
-  double * params_normalized = (double *)malloc(sizeof(double) * params_count);
+  params_normalized = (double *)malloc(sizeof(double) * params_count);
   if (!params_normalized)
     return NULL;
 
@@ -355,14 +358,14 @@ static double ** create_ratematrix(double * params,
     k = 0;
     for (i = 0; i < states; ++i)
     {
-      double row_sum = 0;
+      row_sum = 0;
       for (j = 0; j < states; ++j)
       {
         if (i == j)
         {
           continue;
         }
-        double factor = params_normalized[k++];
+        factor = params_normalized[k++];
         qmatrix[i][j] = factor * sqrt(frequencies[i] * frequencies[j]);
         row_sum += qmatrix[i][j];
       }
@@ -386,7 +389,7 @@ static double ** create_ratematrix(double * params,
     {
       for (j = i+1; j < states; ++j)
       {
-      double factor = (frequencies[i] <= PLL_EIGEN_MINFREQ ||
+      factor = (frequencies[i] <= PLL_EIGEN_MINFREQ ||
                        frequencies[j] <= PLL_EIGEN_MINFREQ) ? 0 : params_normalized[k];
       k++;
       qmatrix[i][j] = qmatrix[j][i] = factor * sqrt(frequencies[i] * frequencies[j]);
