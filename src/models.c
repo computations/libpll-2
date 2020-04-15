@@ -483,6 +483,15 @@ PLL_EXPORT int pll_update_eigen(pll_partition_t * partition,
   }
 
   if (partition->attributes & PLL_ATTRIB_NONREV) {
+    /* It turns out that LU factorization has _bad_ stability. So much so that
+     * it makes the entire process slower, because more effort is spent on
+     * optimizing numerics. For most trees, it will be faster to just compute
+     * each pmatrix from the rate matrix directly, with the increased stability.
+     * So, we are disabling the code that computes the eigenvectors. We should 
+     * be able to re-enable this code when we apply the QR patch for complex
+     * matricies.
+     */
+    /*
     int status = 0;
     eigenvecs_imag = partition->eigenvecs_imag[params_index];
     inv_eigenvecs_imag = partition->inv_eigenvecs_imag[params_index];
@@ -493,9 +502,14 @@ PLL_EXPORT int pll_update_eigen(pll_partition_t * partition,
     if (result_no == PLL_FAILURE) {
       return PLL_FAILURE;
     }
+
     if (status == PLL_NONREV_EIGEN_NONINVERTABLE){
       partition->eigen_diagonalizable[params_index] = 0;
+    } else {
+      partition->eigen_diagonalizable[params_index] = 1;
     }
+    */
+    partition->eigen_diagonalizable[params_index] = 0;
   } else {
     d = (double *)malloc(states * sizeof(double));
     e = (double *)malloc(states * sizeof(double));
