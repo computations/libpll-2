@@ -392,10 +392,10 @@ PLL_EXPORT int pll_utree_every_const(const pll_utree_t * tree,
 }
 
 static void utree_traverse_recursive(pll_unode_t * node,
-                                     int traversal,
-                                     int (*cbtrav)(pll_unode_t *),
-                                     unsigned int * index,
-                                     pll_unode_t ** outbuffer)
+                                       int traversal,
+                                       int (*cbtrav)(pll_unode_t *),
+                                       unsigned int * index,
+                                       pll_unode_t ** outbuffer)
 {
   if (!cbtrav(node))
     return;
@@ -422,6 +422,43 @@ static void utree_traverse_recursive(pll_unode_t * node,
     outbuffer[*index] = node;
     *index = *index + 1;
   }
+}
+
+PLL_EXPORT int pll_utree_traverse_subtree(pll_unode_t * root,
+                                          int traversal,
+                                          int (*cbtrav)(pll_unode_t *),
+                                          pll_unode_t ** outbuffer,
+                                          unsigned int * trav_size) 
+{
+  *trav_size = 0;
+  if (!root->next) return PLL_FAILURE;
+
+  if (traversal == PLL_TREE_TRAVERSE_POSTORDER ||
+      traversal == PLL_TREE_TRAVERSE_PREORDER)
+  {
+    /* Unlike the other function, we only recurse on the subtree induced by root
+     * This means that for the tree
+     *             2
+     *            / next
+     *     1 ----*
+     *       back \ next
+     *             3
+     *
+     * Only 2 and 3 will be traversed, because the noce associated with the back
+     * pointer will not be used.
+     */
+
+    utree_traverse_recursive(root, traversal, cbtrav, trav_size, outbuffer);
+  }
+  else
+  {
+    snprintf(pll_errmsg, 200, "Invalid traversal value.");
+    pll_errno = PLL_ERROR_PARAM_INVALID;
+    return PLL_FAILURE;
+  }
+
+  return PLL_SUCCESS;
+
 }
 
 PLL_EXPORT int pll_utree_traverse(pll_unode_t * root,
