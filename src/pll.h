@@ -926,6 +926,12 @@ PLL_EXPORT int pll_utree_traverse(pll_unode_t * root,
                                   pll_unode_t ** outbuffer,
                                   unsigned int * trav_size);
 
+PLL_EXPORT int pll_utree_traverse_subtree(pll_unode_t * root,
+                                          int traversal,
+                                          int (*cbtrav)(pll_unode_t *),
+                                          pll_unode_t ** outbuffer,
+                                          unsigned int * trav_size);
+
 PLL_EXPORT void pll_utree_create_operations(pll_unode_t * const* trav_buffer,
                                             unsigned int trav_buffer_size,
                                             double * branches,
